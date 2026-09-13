@@ -261,10 +261,14 @@ run "anthropic_api_key_blank" {
   command = plan
 
   variables {
-    enable_slack_bot     = true
-    slack_bot_token      = "test-slack-token"
-    slack_signing_secret = "test-slack-signing-secret"
-    anthropic_api_key    = ""
+    enable_slack_bot          = true
+    slack_bot_token           = "test-slack-token"
+    slack_signing_secret      = "test-slack-signing-secret"
+    slack_app_id              = "A123"
+    slack_team_id             = "T123"
+    slack_allowed_user_ids    = "U123"
+    slack_allowed_channel_ids = "C123"
+    anthropic_api_key         = ""
   }
 
   expect_failures = [var.anthropic_api_key]

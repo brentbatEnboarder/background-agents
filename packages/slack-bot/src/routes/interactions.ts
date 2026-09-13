@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { handleAppHomeInteractionRoute } from "../app-home";
 import { handleSlackInteraction } from "../interactions/dispatcher";
 import { slackInteractionPayloadSchema } from "../interaction-payload";
+import { admitSlackInteraction } from "../ingress-policy";
 import { createLogger } from "../logger";
 import {
   SELECT_TARGET_ACTION_ID,
@@ -47,6 +48,16 @@ interactionRoutes.post("/interactions", async (c) => {
   const parsedPayload = slackInteractionPayloadSchema.safeParse(rawPayload);
   if (!parsedPayload.success) return c.json({ error: "Invalid payload" }, 400);
   const payload = parsedPayload.data;
+  const admission = admitSlackInteraction(payload, c.env);
+  if (!admission.admitted) {
+    log.warn("slack.ingress.rejected", {
+      trace_id: traceId,
+      route: "/interactions",
+      reason: admission.reason,
+    });
+    const status = admission.reason === "invalid_configuration" ? 503 : 403;
+    return c.json({ error: status === 503 ? "Ingress unavailable" : "Request rejected" }, status);
+  }
   const scheduleBackground = (promise: Promise<void>) => c.executionCtx.waitUntil(promise);
   const appHomeResponse = await handleAppHomeInteractionRoute(
     payload,

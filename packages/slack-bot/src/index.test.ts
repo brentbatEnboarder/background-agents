@@ -119,6 +119,10 @@ function makeEnv() {
     WEB_APP_URL: "https://app.test",
     DEFAULT_MODEL: "anthropic/claude-haiku-4-5",
     CLASSIFICATION_MODEL: "anthropic/claude-haiku-4-5",
+    SLACK_APP_ID: "A123",
+    SLACK_TEAM_ID: "T123",
+    SLACK_ALLOWED_USER_IDS: "U123,U456",
+    SLACK_ALLOWED_CHANNEL_IDS: "C123",
     SLACK_BOT_TOKEN: "xoxb-test",
     SLACK_SIGNING_SECRET: "signing-secret",
     ANTHROPIC_API_KEY: "test-key",
@@ -393,11 +397,29 @@ function slackEventRequest(event: Record<string, unknown>, eventId = crypto.rand
     },
     body: JSON.stringify({
       type: "event_callback",
+      api_app_id: "A123",
       event_id: eventId,
       event_time: Math.floor(Date.now() / 1000),
       team_id: "T123",
       event,
     }),
+  });
+}
+
+function slackInteractionBody(payload: Record<string, unknown>): URLSearchParams {
+  const normalized = { ...payload };
+  if (!payload.channel && !payload.container) {
+    if (payload.type === "view_submission") {
+      normalized.view = { type: "modal", ...(payload.view as Record<string, unknown>) };
+    } else if (payload.type === "block_suggestion" && payload.action_id === "select_repo") {
+      normalized.container = { type: "message", channel_id: "C123" };
+    } else {
+      normalized.container = { type: "view" };
+      normalized.view = { type: "home", ...((payload.view as Record<string, unknown>) ?? {}) };
+    }
+  }
+  return new URLSearchParams({
+    payload: JSON.stringify({ api_app_id: "A123", team: { id: "T123" }, ...normalized }),
   });
 }
 
@@ -455,7 +477,7 @@ describe("POST /events", () => {
     );
   });
 
-  it("does not dispatch app mentions without a user", async () => {
+  it("rejects app mentions without a user before side effects", async () => {
     const slackFetch = mockSlackFetch([]);
     const env = makeSessionEnv([]);
     const ctx = makeCtx();
@@ -472,16 +494,13 @@ describe("POST /events", () => {
     );
 
     expect(response.status).toBe(200);
-    await flushWaitUntil(ctx);
 
     expect(env.CONTROL_PLANE.fetch).not.toHaveBeenCalled();
     expect(mockGetUserInfo).not.toHaveBeenCalled();
     expect(slackFetch).not.toHaveBeenCalled();
-    expect((env.SLACK_KV as unknown as { put: ReturnType<typeof vi.fn> }).put).toHaveBeenCalledWith(
-      expect.stringMatching(/^event:/),
-      "1",
-      { expirationTtl: 3600 }
-    );
+    expect(
+      (env.SLACK_KV as unknown as { put: ReturnType<typeof vi.fn> }).put
+    ).not.toHaveBeenCalled();
 
     slackFetch.mockRestore();
   });
@@ -684,14 +703,12 @@ describe("POST /events", () => {
           "x-slack-signature": "v0=test",
           "x-slack-request-timestamp": `${Math.floor(Date.now() / 1000)}`,
         },
-        body: new URLSearchParams({
-          payload: JSON.stringify({
-            type: "block_actions",
-            user: { id: "U123" },
-            channel: { id: "C123" },
-            message: { ts: "111.222" },
-            actions: [{ action_id: "select_repo", selected_option: { value: "acme/web" } }],
-          }),
+        body: slackInteractionBody({
+          type: "block_actions",
+          user: { id: "U123" },
+          channel: { id: "C123" },
+          message: { ts: "111.222" },
+          actions: [{ action_id: "select_repo", selected_option: { value: "acme/web" } }],
         }),
       }),
       env,
@@ -1614,7 +1631,7 @@ describe("POST /interactions", () => {
         "x-slack-signature": "v0=test",
         "x-slack-request-timestamp": `${Math.floor(Date.now() / 1000)}`,
       },
-      body: new URLSearchParams({ payload: JSON.stringify(payload) }),
+      body: slackInteractionBody(payload),
     });
     const ctx = makeCtx();
 
@@ -1709,7 +1726,7 @@ describe("POST /interactions", () => {
         "x-slack-signature": "v0=test",
         "x-slack-request-timestamp": `${Math.floor(Date.now() / 1000)}`,
       },
-      body: new URLSearchParams({ payload: JSON.stringify(payload) }),
+      body: slackInteractionBody(payload),
     });
     const ctx = makeCtx();
 
@@ -1753,7 +1770,7 @@ describe("POST /interactions", () => {
           "x-slack-signature": "v0=test",
           "x-slack-request-timestamp": `${Math.floor(Date.now() / 1000)}`,
         },
-        body: new URLSearchParams({ payload: JSON.stringify(payload) }),
+        body: slackInteractionBody(payload),
       });
 
       const env = makeEnv();
@@ -1802,7 +1819,7 @@ describe("POST /interactions", () => {
         "x-slack-signature": "v0=test",
         "x-slack-request-timestamp": `${Math.floor(Date.now() / 1000)}`,
       },
-      body: new URLSearchParams({ payload: JSON.stringify(payload) }),
+      body: slackInteractionBody(payload),
     });
 
     const env = makeEnv();
@@ -1848,7 +1865,7 @@ describe("POST /interactions", () => {
         "x-slack-signature": "v0=test",
         "x-slack-request-timestamp": `${Math.floor(Date.now() / 1000)}`,
       },
-      body: new URLSearchParams({ payload: JSON.stringify(payload) }),
+      body: slackInteractionBody(payload),
     });
 
     const env = makeEnv();
@@ -1908,7 +1925,7 @@ describe("POST /interactions", () => {
         "x-slack-signature": "v0=test",
         "x-slack-request-timestamp": `${Math.floor(Date.now() / 1000)}`,
       },
-      body: new URLSearchParams({ payload: JSON.stringify(payload) }),
+      body: slackInteractionBody(payload),
     });
 
     const env = makeEnv();
@@ -1956,7 +1973,7 @@ describe("POST /interactions", () => {
         "x-slack-signature": "v0=test",
         "x-slack-request-timestamp": `${Math.floor(Date.now() / 1000)}`,
       },
-      body: new URLSearchParams({ payload: JSON.stringify(payload) }),
+      body: slackInteractionBody(payload),
     });
 
     const env = makeEnv();
@@ -2007,7 +2024,7 @@ describe("POST /interactions", () => {
         "x-slack-signature": "v0=test",
         "x-slack-request-timestamp": `${Math.floor(Date.now() / 1000)}`,
       },
-      body: new URLSearchParams({ payload: JSON.stringify(payload) }),
+      body: slackInteractionBody(payload),
     });
 
     const env = makeEnv();
@@ -2052,7 +2069,7 @@ describe("POST /interactions", () => {
         "x-slack-signature": "v0=test",
         "x-slack-request-timestamp": `${Math.floor(Date.now() / 1000)}`,
       },
-      body: new URLSearchParams({ payload: JSON.stringify(payload) }),
+      body: slackInteractionBody(payload),
     });
 
     const env = makeEnv();
@@ -2185,7 +2202,7 @@ describe("POST /interactions", () => {
         "x-slack-signature": "v0=test",
         "x-slack-request-timestamp": `${Math.floor(Date.now() / 1000)}`,
       },
-      body: new URLSearchParams({ payload: JSON.stringify(payload) }),
+      body: slackInteractionBody(payload),
     });
 
     const env = makeEnv();
@@ -2287,7 +2304,7 @@ describe("POST /interactions", () => {
         "x-slack-signature": "v0=test",
         "x-slack-request-timestamp": `${Math.floor(Date.now() / 1000)}`,
       },
-      body: new URLSearchParams({ payload: JSON.stringify(payload) }),
+      body: slackInteractionBody(payload),
     });
 
     const env = makeEnv();
@@ -2379,7 +2396,7 @@ describe("POST /interactions", () => {
         "x-slack-signature": "v0=test",
         "x-slack-request-timestamp": `${Math.floor(Date.now() / 1000)}`,
       },
-      body: new URLSearchParams({ payload: JSON.stringify(payload) }),
+      body: slackInteractionBody(payload),
     });
 
     const env = makeEnv();
@@ -2417,7 +2434,7 @@ describe("POST /interactions", () => {
         "x-slack-signature": "v0=test",
         "x-slack-request-timestamp": `${Math.floor(Date.now() / 1000)}`,
       },
-      body: new URLSearchParams({ payload: JSON.stringify(payload) }),
+      body: slackInteractionBody(payload),
     });
 
     const env = makeEnv();
@@ -2466,7 +2483,7 @@ describe("POST /interactions", () => {
         "x-slack-signature": "v0=test",
         "x-slack-request-timestamp": `${Math.floor(Date.now() / 1000)}`,
       },
-      body: new URLSearchParams({ payload: JSON.stringify(payload) }),
+      body: slackInteractionBody(payload),
     });
     const ctx = makeCtx();
 
@@ -2498,7 +2515,7 @@ describe("POST /interactions", () => {
         "x-slack-signature": "v0=test",
         "x-slack-request-timestamp": `${Math.floor(Date.now() / 1000)}`,
       },
-      body: new URLSearchParams({ payload: JSON.stringify(payload) }),
+      body: slackInteractionBody(payload),
     });
 
     const env = makeEnv();
@@ -2539,7 +2556,7 @@ describe("POST /interactions", () => {
         "x-slack-signature": "v0=test",
         "x-slack-request-timestamp": `${Math.floor(Date.now() / 1000)}`,
       },
-      body: new URLSearchParams({ payload: JSON.stringify(payload) }),
+      body: slackInteractionBody(payload),
     });
 
     const env = makeEnv();

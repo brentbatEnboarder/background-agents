@@ -30,13 +30,21 @@ function makeEnv(kvOperation: "get" | "put"): Env {
   kv[kvOperation].mockRejectedValueOnce(
     Object.assign(new Error("KV unavailable"), { code: "KV_UNAVAILABLE" })
   );
-  return { SLACK_KV: kv } as unknown as Env;
+  return {
+    SLACK_KV: kv,
+    SLACK_APP_ID: "A123",
+    SLACK_TEAM_ID: "T123",
+    SLACK_ALLOWED_USER_IDS: "U123,U456",
+    SLACK_ALLOWED_CHANNEL_IDS: "C123",
+  } as unknown as Env;
 }
 
 function eventRequest(): Request {
   return slackRequest(
     JSON.stringify({
       type: "event_callback",
+      api_app_id: "A123",
+      team_id: "T123",
       event_id: EVENT_ID,
       event: {
         type: "app_home_opened",
@@ -127,6 +135,8 @@ describe("POST /events deduplication", () => {
       slackRequest(
         JSON.stringify({
           type: "event_callback",
+          api_app_id: "A123",
+          team_id: "T123",
           event: {
             type: "message",
             text: "see attached",
@@ -164,6 +174,194 @@ describe("POST /events deduplication", () => {
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({ error: "Invalid payload" });
     expect(mockHandleSlackEvent).not.toHaveBeenCalled();
+  });
+
+  it("dispatches an allowed DM without requiring its channel in the allowlist", async () => {
+    const env = makeEnv("get");
+    const ctx = makeCtx();
+    const response = await eventRoutes.fetch(
+      slackRequest(
+        JSON.stringify({
+          type: "event_callback",
+          api_app_id: "A123",
+          team_id: "T123",
+          event: {
+            type: "message",
+            text: "Investigate this",
+            user: "U123",
+            channel: "DTRANSIENT",
+            channel_type: "im",
+            ts: "123.456",
+          },
+        })
+      ),
+      env,
+      ctx
+    );
+
+    expect(response.status).toBe(200);
+    await ctx.waitUntil.mock.calls[0][0];
+    expect(mockHandleSlackEvent).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["app", { api_app_id: undefined }],
+    ["app", { api_app_id: "A999" }],
+    ["workspace", { team_id: undefined }],
+    ["workspace", { team_id: "T999" }],
+    ["user", { event: { type: "app_home_opened", tab: "home", user: "U999" } }],
+    [
+      "channel",
+      {
+        event: {
+          type: "message",
+          text: "not allowed",
+          user: "U123",
+          channel: "C999",
+          channel_type: "channel",
+        },
+      },
+    ],
+  ])("rejects the wrong %s before dedupe or dispatch", async (_name, override) => {
+    const env = makeEnv("get");
+    const base = {
+      type: "event_callback",
+      api_app_id: "A123",
+      team_id: "T123",
+      event_id: "Ev-rejected",
+      event: { type: "app_home_opened", tab: "home", user: "U123" },
+    };
+    const payload = { ...base, ...override };
+    const response = await eventRoutes.fetch(slackRequest(JSON.stringify(payload)), env, makeCtx());
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true });
+    expect((env.SLACK_KV as any).get).not.toHaveBeenCalled();
+    expect(mockHandleSlackEvent).not.toHaveBeenCalled();
+  });
+
+  it("acknowledges a bot-authored event without dedupe or dispatch", async () => {
+    const env = makeEnv("get");
+    const response = await eventRoutes.fetch(
+      slackRequest(
+        JSON.stringify({
+          type: "event_callback",
+          api_app_id: "A123",
+          team_id: "T123",
+          event_id: "Ev-bot",
+          event: { type: "message", bot_id: "B123", channel: "C123" },
+        })
+      ),
+      env,
+      makeCtx()
+    );
+
+    expect(response.status).toBe(200);
+    expect((env.SLACK_KV as any).get).not.toHaveBeenCalled();
+    expect(mockHandleSlackEvent).not.toHaveBeenCalled();
+  });
+
+  it("returns the challenge for a signed URL verification handshake", async () => {
+    const response = await eventRoutes.fetch(
+      slackRequest(JSON.stringify({ type: "url_verification", challenge: "challenge-123" })),
+      makeEnv("get"),
+      makeCtx()
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ challenge: "challenge-123" });
+    expect(mockHandleSlackEvent).not.toHaveBeenCalled();
+  });
+
+  it("rejects a channel-scoped event without a channel before side effects", async () => {
+    const env = makeEnv("get");
+    const response = await eventRoutes.fetch(
+      slackRequest(
+        JSON.stringify({
+          type: "event_callback",
+          api_app_id: "A123",
+          team_id: "T123",
+          event_id: "Ev-no-channel",
+          event: { type: "message", user: "U123", text: "missing channel" },
+        })
+      ),
+      env,
+      makeCtx()
+    );
+
+    expect(response.status).toBe(200);
+    expect((env.SLACK_KV as any).get).not.toHaveBeenCalled();
+    expect(mockHandleSlackEvent).not.toHaveBeenCalled();
+  });
+
+  it("does not treat channel_type im as a DM without a D-prefixed channel", async () => {
+    const env = makeEnv("get");
+    const response = await eventRoutes.fetch(
+      slackRequest(
+        JSON.stringify({
+          type: "event_callback",
+          api_app_id: "A123",
+          team_id: "T123",
+          event_id: "Ev-fake-dm",
+          event: {
+            type: "message",
+            user: "U123",
+            channel: "C999",
+            channel_type: "im",
+          },
+        })
+      ),
+      env,
+      makeCtx()
+    );
+
+    expect(response.status).toBe(200);
+    expect((env.SLACK_KV as any).get).not.toHaveBeenCalled();
+    expect(mockHandleSlackEvent).not.toHaveBeenCalled();
+  });
+
+  it("acknowledges unsupported message subtypes before user and channel admission", async () => {
+    const env = makeEnv("get");
+    const response = await eventRoutes.fetch(
+      slackRequest(
+        JSON.stringify({
+          type: "event_callback",
+          api_app_id: "A123",
+          team_id: "T123",
+          event_id: "Ev-message-change",
+          event: { type: "message", subtype: "message_changed" },
+        })
+      ),
+      env,
+      makeCtx()
+    );
+
+    expect(response.status).toBe(200);
+    expect((env.SLACK_KV as any).get).not.toHaveBeenCalled();
+    expect(mockHandleSlackEvent).not.toHaveBeenCalled();
+  });
+
+  it("trims configured comma-separated allowlists before admission", async () => {
+    const env = makeEnv("get");
+    env.SLACK_ALLOWED_USER_IDS = " U123 , U456 ";
+    env.SLACK_ALLOWED_CHANNEL_IDS = " C123 , G456 ";
+    const ctx = makeCtx();
+    const response = await eventRoutes.fetch(
+      slackRequest(
+        JSON.stringify({
+          type: "event_callback",
+          api_app_id: "A123",
+          team_id: "T123",
+          event: { type: "app_mention", user: "U123", channel: "C123", text: "<@B1> hi" },
+        })
+      ),
+      env,
+      ctx
+    );
+
+    expect(response.status).toBe(200);
+    await ctx.waitUntil.mock.calls[0][0];
+    expect(mockHandleSlackEvent).toHaveBeenCalledOnce();
   });
 
   it("rejects partial payloads without a type", async () => {

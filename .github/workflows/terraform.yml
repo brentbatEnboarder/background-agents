@@ -261,6 +261,10 @@ jobs:
           TF_VAR_enable_slack_bot: "${{ vars.ENABLE_SLACK_BOT || secrets.ENABLE_SLACK_BOT || 'true' }}"
           TF_VAR_slack_bot_token: ${{ secrets.SLACK_BOT_TOKEN }}
           TF_VAR_slack_signing_secret: ${{ secrets.SLACK_SIGNING_SECRET }}
+          TF_VAR_slack_app_id: ${{ vars.SLACK_APP_ID }}
+          TF_VAR_slack_team_id: ${{ vars.SLACK_TEAM_ID }}
+          TF_VAR_slack_allowed_user_ids: ${{ vars.SLACK_ALLOWED_USER_IDS }}
+          TF_VAR_slack_allowed_channel_ids: ${{ vars.SLACK_ALLOWED_CHANNEL_IDS }}
           TF_VAR_slack_bot_default_model: "${{ vars.SLACK_BOT_DEFAULT_MODEL || secrets.SLACK_BOT_DEFAULT_MODEL || 'claude-haiku-4-5' }}"
           TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           TF_VAR_classification_openai_api_key: ${{ secrets.CLASSIFICATION_OPENAI_API_KEY }}
@@ -441,6 +445,10 @@ jobs:
           TF_VAR_enable_slack_bot: "${{ vars.ENABLE_SLACK_BOT || secrets.ENABLE_SLACK_BOT || 'true' }}"
           TF_VAR_slack_bot_token: ${{ secrets.SLACK_BOT_TOKEN }}
           TF_VAR_slack_signing_secret: ${{ secrets.SLACK_SIGNING_SECRET }}
+          TF_VAR_slack_app_id: ${{ vars.SLACK_APP_ID }}
+          TF_VAR_slack_team_id: ${{ vars.SLACK_TEAM_ID }}
+          TF_VAR_slack_allowed_user_ids: ${{ vars.SLACK_ALLOWED_USER_IDS }}
+          TF_VAR_slack_allowed_channel_ids: ${{ vars.SLACK_ALLOWED_CHANNEL_IDS }}
           TF_VAR_slack_bot_default_model: "${{ vars.SLACK_BOT_DEFAULT_MODEL || secrets.SLACK_BOT_DEFAULT_MODEL || 'claude-haiku-4-5' }}"
           TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           TF_VAR_classification_openai_api_key: ${{ secrets.CLASSIFICATION_OPENAI_API_KEY }}

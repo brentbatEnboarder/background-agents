@@ -199,6 +199,13 @@ enable_slack_bot = false
 slack_bot_token = ""       # e.g., "xoxb-..."
 slack_signing_secret = ""
 
+# Non-secret ingress policy. Use immutable Slack IDs, never display names.
+# Direct messages from allowed users do not require their transient D-channel IDs here.
+slack_app_id              = "" # e.g., "A0123456789"
+slack_team_id             = "" # e.g., "T0123456789"
+slack_allowed_user_ids    = "" # e.g., "U0123456789,U9876543210"
+slack_allowed_channel_ids = "" # e.g., "C0123456789"
+
 # Model the Slack bot uses for a user who has not picked one from the model
 # menu. Accepts a canonical "provider/model" id or a bare "claude-"/"gpt-" id.
 # slack_bot_default_model = "claude-haiku-4-5"

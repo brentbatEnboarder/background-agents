@@ -29,6 +29,10 @@ export interface Env {
   DEFAULT_MODEL: string;
   CLASSIFICATION_MODEL: string;
   APP_NAME?: string;
+  SLACK_APP_ID?: string;
+  SLACK_TEAM_ID?: string;
+  SLACK_ALLOWED_USER_IDS?: string;
+  SLACK_ALLOWED_CHANNEL_IDS?: string;
 
   // Secrets
   SLACK_BOT_TOKEN: string;

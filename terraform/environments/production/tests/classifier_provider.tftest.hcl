@@ -36,9 +36,13 @@ variables {
   enable_github_bot = false
 
   # Both classifier-bearing bots are deployed so their bindings can be asserted.
-  enable_slack_bot     = true
-  slack_bot_token      = "xoxb-test"
-  slack_signing_secret = "test-signing-secret"
+  enable_slack_bot          = true
+  slack_bot_token           = "xoxb-test"
+  slack_signing_secret      = "test-signing-secret"
+  slack_app_id              = "A123"
+  slack_team_id             = "T123"
+  slack_allowed_user_ids    = "U123"
+  slack_allowed_channel_ids = "C123"
 
   enable_linear_bot     = true
   linear_client_id      = "test-linear-client-id"

@@ -103,6 +103,10 @@ function makeEnv(
     WEB_APP_URL: "https://app.test",
     DEFAULT_MODEL: "anthropic/claude-haiku-4-5",
     CLASSIFICATION_MODEL: "anthropic/claude-haiku-4-5",
+    SLACK_APP_ID: "A123",
+    SLACK_TEAM_ID: "T123",
+    SLACK_ALLOWED_USER_IDS: "U999",
+    SLACK_ALLOWED_CHANNEL_IDS: "C123",
     SLACK_BOT_TOKEN: "xoxb-test",
     SLACK_SIGNING_SECRET: "secret",
     SERVICE_AUTH_SECRET: "internal-secret",
@@ -131,6 +135,7 @@ function channelMessageRequest(event: Record<string, unknown>): Request {
     },
     body: JSON.stringify({
       type: "event_callback",
+      api_app_id: "A123",
       event_id: crypto.randomUUID(),
       event_time: Math.floor(Date.now() / 1000),
       team_id: "T123",

@@ -2,6 +2,8 @@ import { z } from "zod";
 
 export const slackInteractionPayloadSchema = z.object({
   type: z.string(),
+  api_app_id: z.string().optional(),
+  team: z.object({ id: z.string() }).optional(),
   action_id: z.string().optional(),
   value: z.string().optional(),
   trigger_id: z.string().optional(),
@@ -15,10 +17,12 @@ export const slackInteractionPayloadSchema = z.object({
     )
     .optional(),
   channel: z.object({ id: z.string() }).optional(),
+  container: z.object({ type: z.string(), channel_id: z.string().optional() }).optional(),
   message: z.object({ ts: z.string(), thread_ts: z.string().optional() }).optional(),
   user: z.object({ id: z.string() }).optional(),
   view: z
     .object({
+      type: z.string().optional(),
       callback_id: z.string().optional(),
       private_metadata: z.string().optional(),
       state: z

@@ -372,6 +372,22 @@ them:
 
 These notes are most useful for workspace admins deciding where the Slack bot should be available.
 
+The deployed Worker admits requests only from the configured Slack app and workspace, allowed user
+IDs, and, for channel-scoped requests, allowed channel IDs. Configure the non-secret repository
+variables `SLACK_APP_ID`, `SLACK_TEAM_ID`, `SLACK_ALLOWED_USER_IDS`, and `SLACK_ALLOWED_CHANNEL_IDS`
+before enabling the Worker. Values are immutable Slack IDs; comma-separated allowlists must not use
+display names. Direct messages from allowed users remain available without adding transient `D...`
+conversation IDs to the channel allowlist, and App Home interactions do not require a channel.
+Missing or malformed policy configuration fails Terraform planning and the runtime also refuses
+traffic if invalid bindings reach it.
+
+Find the app ID under **Slack API Apps → Basic Information → App Credentials**. The workspace/team
+ID is the `T...` segment in an `app.slack.com/client/T...` workspace URL. For each approved person,
+open their Slack profile, choose **More**, and copy the member ID. Open each approved channel's
+details and copy its channel ID from the **About** tab. Set those values as `SLACK_APP_ID`,
+`SLACK_TEAM_ID`, `SLACK_ALLOWED_USER_IDS`, and `SLACK_ALLOWED_CHANNEL_IDS` repository variables.
+Existing enabled deployments must configure all four before planning or applying this upgrade.
+
 - Slack bot tokens stay server-side. They are not sent to sandboxes.
 - Slack requests are verified before Open-Inspect acts on them.
 - Slack-created sessions use deployment-level repository access. The repositories shown in Slack are

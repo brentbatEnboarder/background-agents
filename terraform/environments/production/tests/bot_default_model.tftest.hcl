@@ -39,9 +39,13 @@ variables {
   github_webhook_secret = "test-github-webhook-secret"
   github_bot_username   = "test-bot[bot]"
 
-  enable_slack_bot     = true
-  slack_bot_token      = "xoxb-test"
-  slack_signing_secret = "test-signing-secret"
+  enable_slack_bot          = true
+  slack_bot_token           = "xoxb-test"
+  slack_signing_secret      = "test-signing-secret"
+  slack_app_id              = "A123"
+  slack_team_id             = "T123"
+  slack_allowed_user_ids    = "U123"
+  slack_allowed_channel_ids = "C123"
 
   enable_linear_bot     = true
   linear_client_id      = "test-linear-client-id"

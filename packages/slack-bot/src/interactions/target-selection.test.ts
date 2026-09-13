@@ -92,7 +92,16 @@ describe("handleTargetSelection", () => {
     });
     const env = makeEnv();
 
-    await handleTargetSelection("acme/app", "C123", "111.222", undefined, env, "trace-1", vi.fn());
+    await handleTargetSelection(
+      "acme/app",
+      "C123",
+      "111.222",
+      undefined,
+      "U123",
+      env,
+      "trace-1",
+      vi.fn()
+    );
 
     expect(getMessageDetails).toHaveBeenCalledWith("xoxb-test", "C123", "111.222", undefined);
     expect(startSessionAndSendPrompt).toHaveBeenCalledWith(
@@ -131,6 +140,7 @@ describe("handleTargetSelection", () => {
       "C123",
       "111.222",
       undefined,
+      "U123",
       makeEnv(),
       "trace-1",
       vi.fn()
@@ -156,6 +166,7 @@ describe("handleTargetSelection", () => {
       "C123",
       "111.222",
       undefined,
+      "U123",
       makeEnv(),
       "trace-1",
       vi.fn()
@@ -178,7 +189,16 @@ describe("handleTargetSelection", () => {
     vi.mocked(getMessageDetails).mockResolvedValue({ ok: false, error: "message_not_found" });
     const env = makeEnv();
 
-    await handleTargetSelection("acme/app", "C123", "111.222", undefined, env, "trace-1", vi.fn());
+    await handleTargetSelection(
+      "acme/app",
+      "C123",
+      "111.222",
+      undefined,
+      "U123",
+      env,
+      "trace-1",
+      vi.fn()
+    );
 
     expect(startSessionAndSendPrompt).not.toHaveBeenCalled();
     expect(vi.mocked(postMessage)).toHaveBeenCalledWith(
@@ -187,5 +207,24 @@ describe("handleTargetSelection", () => {
       expect.stringContaining("couldn't retrieve the attached image(s)"),
       { thread_ts: "111.222" }
     );
+  });
+
+  it("rejects a selection made by someone other than the pending requester", async () => {
+    vi.mocked(getPendingRequest).mockResolvedValue({ message: "Fix the deploy", userId: "U123" });
+
+    await handleTargetSelection(
+      "acme/app",
+      "C123",
+      "111.222",
+      undefined,
+      "U456",
+      makeEnv(),
+      "trace-1",
+      vi.fn()
+    );
+
+    expect(resolveTargetValue).not.toHaveBeenCalled();
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(startSessionAndSendPrompt).not.toHaveBeenCalled();
   });
 });

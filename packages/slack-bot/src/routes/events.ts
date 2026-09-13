@@ -3,6 +3,7 @@ import { createKvCacheStore } from "@open-inspect/shared/cache-store";
 import { Hono } from "hono";
 import { handleSlackEvent } from "../events/dispatcher";
 import { slackEventPayloadSchema } from "../events/payload";
+import { admitSlackEvent } from "../ingress-policy";
 import { createLogger } from "../logger";
 import type { Env } from "../types";
 
@@ -41,6 +42,15 @@ eventRoutes.post("/events", async (c) => {
   const parsedPayload = slackEventPayloadSchema.safeParse(parsedJson);
   if (!parsedPayload.success) return c.json({ error: "Invalid payload" }, 400);
   const payload = parsedPayload.data;
+  const admission = admitSlackEvent(payload, c.env);
+  if (!admission.admitted) {
+    log.warn("slack.ingress.rejected", {
+      trace_id: traceId,
+      route: "/events",
+      reason: admission.reason,
+    });
+    return c.json({ ok: true });
+  }
   if (payload.type === "url_verification") return c.json({ challenge: payload.challenge });
 
   const eventId = payload.event_id;

@@ -257,6 +257,56 @@ variable "slack_signing_secret" {
   default     = ""
 }
 
+variable "slack_app_id" {
+  description = "Expected Slack app ID used to admit signed Events API and interaction payloads"
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.enable_slack_bot == false || can(regex("^A[A-Z0-9]+$", var.slack_app_id))
+    error_message = "slack_app_id must be a valid Slack app ID when enable_slack_bot is true."
+  }
+}
+
+variable "slack_team_id" {
+  description = "Expected Slack workspace/team ID used to admit signed payloads"
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.enable_slack_bot == false || can(regex("^T[A-Z0-9]+$", var.slack_team_id))
+    error_message = "slack_team_id must be a valid Slack workspace ID when enable_slack_bot is true."
+  }
+}
+
+variable "slack_allowed_user_ids" {
+  description = "Comma-separated Slack user IDs allowed to start or interact with sessions"
+  type        = string
+  default     = ""
+
+  validation {
+    condition = var.enable_slack_bot == false || can(regex(
+      "^[[:space:]]*[UW][A-Z0-9]+[[:space:]]*(,[[:space:]]*[UW][A-Z0-9]+[[:space:]]*)*$",
+      var.slack_allowed_user_ids
+    ))
+    error_message = "slack_allowed_user_ids must be a non-empty comma-separated list of Slack user IDs when enable_slack_bot is true."
+  }
+}
+
+variable "slack_allowed_channel_ids" {
+  description = "Comma-separated Slack channel IDs allowed to start or interact with sessions; direct-message IDs are admitted separately"
+  type        = string
+  default     = ""
+
+  validation {
+    condition = var.enable_slack_bot == false || can(regex(
+      "^[[:space:]]*[CG][A-Z0-9]+[[:space:]]*(,[[:space:]]*[CG][A-Z0-9]+[[:space:]]*)*$",
+      var.slack_allowed_channel_ids
+    ))
+    error_message = "slack_allowed_channel_ids must be a non-empty comma-separated list of Slack channel IDs when enable_slack_bot is true."
+  }
+}
+
 variable "slack_bot_default_model" {
   description = "Model the Slack bot starts a session with when the requesting user has no saved model preference. A canonical \"provider/model\" id, or a bare \"claude-\"/\"gpt-\" id the bots normalize into that provider's namespace."
   type        = string

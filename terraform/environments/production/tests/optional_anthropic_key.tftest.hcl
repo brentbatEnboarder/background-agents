@@ -154,11 +154,15 @@ run "an_anthropic_classifier_still_requires_the_key" {
   command = plan
 
   variables {
-    enable_slack_bot     = true
-    slack_bot_token      = "xoxb-test"
-    slack_signing_secret = "test-signing-secret"
-    classification_model = "claude-haiku-4-5"
-    anthropic_api_key    = ""
+    enable_slack_bot          = true
+    slack_bot_token           = "xoxb-test"
+    slack_signing_secret      = "test-signing-secret"
+    slack_app_id              = "A123"
+    slack_team_id             = "T123"
+    slack_allowed_user_ids    = "U123"
+    slack_allowed_channel_ids = "C123"
+    classification_model      = "claude-haiku-4-5"
+    anthropic_api_key         = ""
   }
 
   expect_failures = [var.anthropic_api_key]
@@ -172,6 +176,10 @@ run "an_openai_classifier_needs_no_anthropic_key" {
     enable_slack_bot              = true
     slack_bot_token               = "xoxb-test"
     slack_signing_secret          = "test-signing-secret"
+    slack_app_id                  = "A123"
+    slack_team_id                 = "T123"
+    slack_allowed_user_ids        = "U123"
+    slack_allowed_channel_ids     = "C123"
     classification_model          = "gpt-5.4-mini"
     classification_openai_api_key = "test-openai-key"
     anthropic_api_key             = ""

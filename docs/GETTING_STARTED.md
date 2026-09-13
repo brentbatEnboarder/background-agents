@@ -568,6 +568,10 @@ google_client_secret = ""
 enable_slack_bot     = false
 slack_bot_token      = ""
 slack_signing_secret = ""
+slack_app_id              = "" # Slack app ID, e.g. A0123456789
+slack_team_id             = "" # Slack workspace ID, e.g. T0123456789
+slack_allowed_user_ids    = "" # Comma-separated immutable user IDs
+slack_allowed_channel_ids = "" # Comma-separated channel IDs; DMs do not go here
 
 # GitHub Bot (set enable_github_bot = true to deploy the webhook worker)
 enable_github_bot      = false
@@ -1036,6 +1040,10 @@ GOOGLE_CLIENT_ID
 GH_APP_ID
 GH_APP_INSTALLATION_ID
 ENABLE_SLACK_BOT
+SLACK_APP_ID
+SLACK_TEAM_ID
+SLACK_ALLOWED_USER_IDS
+SLACK_ALLOWED_CHANNEL_IDS
 ENABLE_GITHUB_BOT
 GH_BOT_USERNAME
 ENABLE_LINEAR_BOT
@@ -1128,6 +1136,10 @@ Secrets for credentials:
 | `ENABLE_SLACK_BOT`                 | `true` to deploy Slack bot, `false` to skip (default: `true`)                               |
 | `SLACK_BOT_TOKEN`                  | Slack bot token (required if enabled)                                                       |
 | `SLACK_SIGNING_SECRET`             | Slack signing secret (required if enabled)                                                  |
+| `SLACK_APP_ID`                     | Expected Slack app ID (required if enabled)                                                 |
+| `SLACK_TEAM_ID`                    | Expected Slack workspace/team ID (required if enabled)                                      |
+| `SLACK_ALLOWED_USER_IDS`           | Comma-separated Slack user IDs admitted by the Worker (required if enabled)                 |
+| `SLACK_ALLOWED_CHANNEL_IDS`        | Comma-separated channel IDs; authorized direct-message IDs are exempt (required if enabled) |
 | `ENABLE_LINEAR_BOT`                | `true` to deploy Linear bot, `false` to skip (default: `false`)                             |
 | `LINEAR_CLIENT_ID`                 | Linear OAuth application client ID (required if Linear enabled)                             |
 | `LINEAR_CLIENT_SECRET`             | Linear OAuth application client secret (required if Linear enabled)                         |

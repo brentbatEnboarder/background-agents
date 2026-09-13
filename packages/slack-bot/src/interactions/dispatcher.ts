@@ -29,6 +29,7 @@ export async function handleSlackInteraction(
           channel,
           messageTs,
           threadTs,
+          payload.user?.id,
           env,
           traceId,
           scheduleBackground

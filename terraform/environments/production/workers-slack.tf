@@ -71,6 +71,10 @@ module "slack_bot_worker" {
     { name = "APP_NAME", value = var.app_name },
     { name = "DEFAULT_MODEL", value = var.slack_bot_default_model },
     { name = "CLASSIFICATION_MODEL", value = var.classification_model },
+    { name = "SLACK_APP_ID", value = var.slack_app_id },
+    { name = "SLACK_TEAM_ID", value = var.slack_team_id },
+    { name = "SLACK_ALLOWED_USER_IDS", value = var.slack_allowed_user_ids },
+    { name = "SLACK_ALLOWED_CHANNEL_IDS", value = var.slack_allowed_channel_ids },
   ]
 
   secrets = concat(

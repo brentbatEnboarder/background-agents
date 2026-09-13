@@ -27,6 +27,7 @@ export async function handleTargetSelection(
   channel: string,
   messageTs: string,
   threadTs: string | undefined,
+  requesterUserId: string | undefined,
   env: Env,
   traceId: string | undefined,
   scheduleBackground: BackgroundTaskScheduler
@@ -40,6 +41,14 @@ export async function handleTargetSelection(
       "Sorry, I couldn't find your original request. Please try again.",
       { thread_ts: threadKey }
     );
+    return;
+  }
+
+  if (!requesterUserId || pendingData.userId !== requesterUserId) {
+    log.warn("slack.target_selection.requester_mismatch", {
+      trace_id: traceId,
+      outcome: "rejected",
+    });
     return;
   }
 

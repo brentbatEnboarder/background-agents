@@ -19,6 +19,8 @@ import { z } from "zod";
 
 export const slackEventPayloadSchema = z.object({
   type: z.string(),
+  team_id: z.string().optional(),
+  api_app_id: z.string().optional(),
   /** Only present on the `url_verification` handshake. */
   challenge: z.string().optional(),
   /** Present on `event_callback` deliveries; used for Slack retry dedupe. */
