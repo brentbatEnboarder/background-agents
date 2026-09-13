@@ -1,9 +1,9 @@
 import { publishAppHome } from "../app-home";
-import { handleChannelTrigger } from "../channel-trigger";
 import { isDmDispatchable } from "../dm-utils";
+import { admitSlackEvent } from "../ingress-policy";
 import type { BackgroundTaskScheduler } from "../messages/blocks";
 import type { Env } from "../types";
-import { handleAppMention, handleDirectMessage } from "./message-handler";
+import { handleAppMention, handleDirectMessage, handleThreadContinuation } from "./message-handler";
 import type { SlackEventPayload } from "./payload";
 
 /**
@@ -18,6 +18,7 @@ export async function handleSlackEvent(
   traceId: string | undefined,
   scheduleBackground: BackgroundTaskScheduler
 ): Promise<void> {
+  if (!admitSlackEvent(payload, env).admitted) return;
   if (payload.type !== "event_callback" || !payload.event) return;
   const event = payload.event;
   if (event.bot_id) return;
@@ -63,5 +64,20 @@ export async function handleSlackEvent(
     );
     return;
   }
-  if (event.type === "message") await handleChannelTrigger(event, env, traceId);
+  if (event.type === "message" && event.user && event.channel && event.ts && event.thread_ts) {
+    await handleThreadContinuation(
+      {
+        type: event.type,
+        text: event.text ?? "",
+        user: event.user,
+        channel: event.channel,
+        ts: event.ts,
+        thread_ts: event.thread_ts,
+        files: event.files,
+        attachments: event.attachments,
+      },
+      env,
+      traceId
+    );
+  }
 }

@@ -28,7 +28,7 @@ vi.mock("@open-inspect/shared/slack", async () => {
   };
 });
 
-import app from "./index";
+import { handleChannelTrigger } from "./channel-trigger";
 import { clearLocalCache } from "./classifier/repos";
 import { clearBotUserIdCache } from "./bot-identity";
 
@@ -113,43 +113,16 @@ function makeEnv(
   } as unknown as Env;
 }
 
-function makeCtx() {
+function channelMessage(event: Record<string, unknown> = {}) {
   return {
-    props: {},
-    waitUntil: vi.fn(),
-    passThroughOnException: vi.fn(),
-  } as unknown as ExecutionContext & { waitUntil: ReturnType<typeof vi.fn> };
-}
-
-async function flushWaitUntil(ctx: ReturnType<typeof makeCtx>, callIndex = 0): Promise<void> {
-  await ctx.waitUntil.mock.calls[callIndex]?.[0];
-}
-
-function channelMessageRequest(event: Record<string, unknown>): Request {
-  return new Request("http://localhost/events", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-slack-signature": "v0=test",
-      "x-slack-request-timestamp": `${Math.floor(Date.now() / 1000)}`,
-    },
-    body: JSON.stringify({
-      type: "event_callback",
-      api_app_id: "A123",
-      event_id: crypto.randomUUID(),
-      event_time: Math.floor(Date.now() / 1000),
-      team_id: "T123",
-      event: {
-        type: "message",
-        channel_type: "channel",
-        channel: "C123",
-        ts: "1700000000.000100",
-        user: "U999",
-        text: "the deploy job keeps failing",
-        ...event,
-      },
-    }),
-  });
+    type: "message",
+    channel_type: "channel",
+    channel: "C123",
+    ts: "1700000000.000100",
+    user: "U999",
+    text: "the deploy job keeps failing",
+    ...event,
+  };
 }
 
 function forwardedSlackEvents(fetchMock: { mock: { calls: readonly (readonly unknown[])[] } }) {
@@ -158,7 +131,7 @@ function forwardedSlackEvents(fetchMock: { mock: { calls: readonly (readonly unk
     .map(([, init]) => JSON.parse(String((init as RequestInit).body)) as Record<string, unknown>);
 }
 
-describe("channel-message automation triggers (POST /events)", () => {
+describe("handleChannelTrigger", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     clearLocalCache();
@@ -175,11 +148,8 @@ describe("channel-message automation triggers (POST /events)", () => {
 
   it("forwards a normalized event for a candidate message in a watched channel", async () => {
     const env = makeEnv({ watched: ["C123"] });
-    const ctx = makeCtx();
 
-    const res = await app.fetch(channelMessageRequest({}), env, ctx);
-    expect(res.status).toBe(200);
-    await flushWaitUntil(ctx);
+    await handleChannelTrigger(channelMessage(), env, "trace-1");
 
     const forwarded = forwardedSlackEvents(
       env.CONTROL_PLANE.fetch as unknown as { mock: { calls: readonly (readonly unknown[])[] } }
@@ -193,35 +163,25 @@ describe("channel-message automation triggers (POST /events)", () => {
       text: "the deploy job keeps failing",
       triggerKey: "slack:msg:C123:1700000000.000100",
     });
-
-    // A run materialized → mark the triggering message with 👀.
     expect(mockAddReaction).toHaveBeenCalledWith("xoxb-test", "C123", "1700000000.000100", "eyes");
   });
 
   it("does not react when the forward matches no automation (triggered: 0)", async () => {
     const env = makeEnv({ watched: ["C123"], triggered: 0 });
-    const ctx = makeCtx();
 
-    await app.fetch(channelMessageRequest({}), env, ctx);
-    await flushWaitUntil(ctx);
+    await handleChannelTrigger(channelMessage(), env, undefined);
 
     expect(mockAddReaction).not.toHaveBeenCalled();
   });
 
-  it("reacts when a follow-up steers an active run (triggered: 0, steered: 1)", async () => {
+  it("reacts when a follow-up steers an active run", async () => {
     const env = makeEnv({ watched: ["C123"], triggered: 0, steered: 1 });
-    const ctx = makeCtx();
 
-    // A reply in an active thread is forwarded and steers the running session;
-    // the bot still marks the follow-up message with 👀.
-    const res = await app.fetch(
-      channelMessageRequest({ ts: "1700000000.000200", thread_ts: "1700000000.000100" }),
+    await handleChannelTrigger(
+      channelMessage({ ts: "1700000000.000200", thread_ts: "1700000000.000100" }),
       env,
-      ctx
+      undefined
     );
-    expect(res.status).toBe(200);
-    await flushWaitUntil(ctx);
-
     expect(mockAddReaction).toHaveBeenCalledWith("xoxb-test", "C123", "1700000000.000200", "eyes");
   });
 
@@ -230,20 +190,15 @@ describe("channel-message automation triggers (POST /events)", () => {
       watched: ["C123"],
       forwardResponse: { triggered: "1", skipped: 0, steered: 0 },
     });
-    const ctx = makeCtx();
-
-    await app.fetch(channelMessageRequest({}), env, ctx);
-    await flushWaitUntil(ctx);
+    await handleChannelTrigger(channelMessage(), env, undefined);
 
     expect(mockAddReaction).not.toHaveBeenCalled();
   });
 
   it("does not forward a message in an unwatched channel", async () => {
     const env = makeEnv({ watched: ["C-other"] });
-    const ctx = makeCtx();
 
-    await app.fetch(channelMessageRequest({}), env, ctx);
-    await flushWaitUntil(ctx);
+    await handleChannelTrigger(channelMessage(), env, undefined);
 
     const forwarded = forwardedSlackEvents(
       env.CONTROL_PLANE.fetch as unknown as { mock: { calls: readonly (readonly unknown[])[] } }
@@ -253,10 +208,12 @@ describe("channel-message automation triggers (POST /events)", () => {
 
   it("suppresses a message that mentions the bot (handled by app_mention)", async () => {
     const env = makeEnv({ watched: ["C123"] });
-    const ctx = makeCtx();
 
-    await app.fetch(channelMessageRequest({ text: `<@${BOT_USER_ID}> please deploy` }), env, ctx);
-    await flushWaitUntil(ctx);
+    await handleChannelTrigger(
+      channelMessage({ text: `<@${BOT_USER_ID}> please deploy` }),
+      env,
+      undefined
+    );
 
     const forwarded = forwardedSlackEvents(
       env.CONTROL_PLANE.fetch as unknown as { mock: { calls: readonly (readonly unknown[])[] } }

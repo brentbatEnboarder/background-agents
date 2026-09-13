@@ -48,7 +48,7 @@ import {
 } from "../sessions/thread-session-store";
 import { buildTargetClarificationBlocks } from "../target-clarification";
 import { targetLabel } from "../targets";
-import type { Env } from "../types";
+import type { Env, ThreadSession } from "../types";
 import { resolveSlackActorIdentity, type SlackActorIdentity } from "../user-identity";
 
 const log = createLogger("handler");
@@ -132,6 +132,93 @@ interface IncomingMessageParams {
   scheduleBackground: BackgroundTaskScheduler;
 }
 
+type MappedSessionDelivery =
+  | { outcome: "handled" }
+  | { outcome: "stale"; actor: SlackActorIdentity };
+type MappedSessionParams = Omit<IncomingMessageParams, "scheduleBackground">;
+
+async function deliverToMappedSession(
+  params: MappedSessionParams,
+  existingSession: ThreadSession
+): Promise<MappedSessionDelivery> {
+  const { content, user, channel, ts, threadTs, channelName, channelDescription, env, traceId } =
+    params;
+  if (!threadTs) return { outcome: "handled" };
+  const { text: messageText, images, forwarded } = content;
+  const imageOnly = !messageText && !forwarded.hasBody;
+  const requestText =
+    messageText ||
+    (forwarded.entries.length > 0 ? FORWARD_ONLY_PROMPT_TEXT : IMAGE_ONLY_PROMPT_TEXT);
+  const callbackContext: CallbackContext = {
+    source: "slack",
+    channel,
+    threadTs,
+    repoFullName: existingSession.repoFullName,
+    model: existingSession.model,
+    reasoningEffort: existingSession.reasoningEffort,
+    reactionMessageTs: ts,
+  };
+  const channelContext = channelName ? formatChannelContext(channelName, channelDescription) : "";
+  const [actor, interimMessages] = await Promise.all([
+    resolveSlackActorIdentity(env.SLACK_BOT_TOKEN, user),
+    existingSession.lastPromptTs
+      ? fetchThreadHistory(env, channel, threadTs, {
+          excludeTs: ts,
+          sinceTs: existingSession.lastPromptTs,
+          includeBotMessages: false,
+        })
+      : Promise.resolve(undefined),
+  ]);
+  const interimContext = interimMessages ? formatInterimThreadContext(interimMessages) : "";
+  const promptResult = await deliverPrompt(env, {
+    sessionId: existingSession.sessionId,
+    content:
+      channelContext +
+      interimContext +
+      formatAttributedRequest(actor.senderLabel, requestText, forwarded.entries),
+    authorId: `slack:${user}`,
+    attachments: await prepareImageAttachments(env, images, traceId),
+    imageOnly,
+    callbackContext,
+    channel,
+    threadTs,
+    traceId,
+  });
+  if (promptResult.ok) {
+    const interimFetchFailed = Boolean(existingSession.lastPromptTs) && !interimMessages;
+    if (!interimFetchFailed) await advanceLastPromptTs(env, channel, threadTs, ts);
+    const reactionResult = await addReaction(env.SLACK_BOT_TOKEN, channel, ts, "eyes");
+    if (!reactionResult.ok && reactionResult.error !== "already_reacted") {
+      log.warn("slack.reaction.add", {
+        trace_id: traceId,
+        channel,
+        message_ts: ts,
+        reaction: "eyes",
+        slack_error: reactionResult.error,
+      });
+    }
+    return { outcome: "handled" };
+  }
+  if (promptResult.reason === "no_images_delivered") return { outcome: "handled" };
+  if (promptResult.reason === "transient") {
+    await postMessage(
+      env.SLACK_BOT_TOKEN,
+      channel,
+      "Sorry, I couldn't send your follow-up. Please try again.",
+      { thread_ts: threadTs }
+    );
+    return { outcome: "handled" };
+  }
+  log.warn("thread_session.stale", {
+    trace_id: traceId,
+    session_id: existingSession.sessionId,
+    channel,
+    thread_ts: threadTs,
+  });
+  await clearThreadSession(env, channel, threadTs);
+  return { outcome: "stale", actor };
+}
+
 /**
  * Route one user message: follow up on the thread's existing session when there
  * is one, otherwise classify the target and launch a new session (or ask for
@@ -172,90 +259,12 @@ async function handleIncomingMessage(params: IncomingMessageParams): Promise<voi
   const forwardedContext = formatForwardedContext(forwarded.entries);
   const promptText = forwardedContext + requestText;
   let actor: SlackActorIdentity | undefined;
-
   if (threadTs) {
     const existingSession = await lookupThreadSession(env, channel, threadTs);
     if (existingSession) {
-      const callbackContext: CallbackContext = {
-        source: "slack",
-        channel,
-        threadTs,
-        repoFullName: existingSession.repoFullName,
-        model: existingSession.model,
-        reasoningEffort: existingSession.reasoningEffort,
-        reactionMessageTs: ts,
-      };
-      const channelContext = channelName
-        ? formatChannelContext(channelName, channelDescription)
-        : "";
-      // The session already has its own turns, so only forward the human
-      // discussion that happened in the thread since the last prompt.
-      const [resolvedActor, interimMessages] = await Promise.all([
-        resolveSlackActorIdentity(env.SLACK_BOT_TOKEN, user),
-        existingSession.lastPromptTs
-          ? fetchThreadHistory(env, channel, threadTs, {
-              excludeTs: ts,
-              sinceTs: existingSession.lastPromptTs,
-              includeBotMessages: false,
-            })
-          : Promise.resolve(undefined),
-      ]);
-      actor = resolvedActor;
-      const interimContext = interimMessages ? formatInterimThreadContext(interimMessages) : "";
-      const promptResult = await deliverPrompt(env, {
-        sessionId: existingSession.sessionId,
-        content:
-          channelContext +
-          interimContext +
-          formatAttributedRequest(actor.senderLabel, requestText, forwarded.entries),
-        authorId: `slack:${user}`,
-        attachments: await prepareImageAttachments(env, images, traceId),
-        imageOnly,
-        callbackContext,
-        channel,
-        threadTs,
-        traceId,
-      });
-      if (promptResult.ok) {
-        // Only advance the checkpoint past messages we know were considered.
-        // When the interim fetch failed, keeping the old watermark lets the
-        // next follow-up retry the window; at worst it re-includes this
-        // message's text as interim context.
-        const interimFetchFailed = Boolean(existingSession.lastPromptTs) && !interimMessages;
-        if (!interimFetchFailed) {
-          await advanceLastPromptTs(env, channel, threadTs, ts);
-        }
-        const reactionResult = await addReaction(env.SLACK_BOT_TOKEN, channel, ts, "eyes");
-        if (!reactionResult.ok && reactionResult.error !== "already_reacted") {
-          log.warn("slack.reaction.add", {
-            trace_id: traceId,
-            channel,
-            message_ts: ts,
-            reaction: "eyes",
-            slack_error: reactionResult.error,
-          });
-        }
-        return;
-      }
-      // An image-only follow-up that lost every image sends no prompt; the
-      // user was already told inside deliverPrompt.
-      if (promptResult.reason === "no_images_delivered") return;
-      if (promptResult.reason === "transient") {
-        await postMessage(
-          env.SLACK_BOT_TOKEN,
-          channel,
-          "Sorry, I couldn't send your follow-up. Please try again.",
-          { thread_ts: threadTs }
-        );
-        return;
-      }
-      log.warn("thread_session.stale", {
-        trace_id: traceId,
-        session_id: existingSession.sessionId,
-        channel,
-        thread_ts: threadTs,
-      });
-      await clearThreadSession(env, channel, threadTs);
+      const delivery = await deliverToMappedSession(params, existingSession);
+      if (delivery.outcome === "handled") return;
+      actor = delivery.actor;
     }
   }
 
@@ -337,6 +346,52 @@ async function handleIncomingMessage(params: IncomingMessageParams): Promise<voi
     });
     scheduleStartingStatus(scheduleBackground, env, channel, threadKey, traceId);
   }
+}
+
+/** Continue only an existing interactive channel session; never classify or launch. */
+export async function handleThreadContinuation(
+  event: {
+    type: string;
+    text: string;
+    user: string;
+    channel: string;
+    ts: string;
+    thread_ts: string;
+    files?: SlackMessageFile[];
+    attachments?: SlackMessageAttachment[];
+  },
+  env: Env,
+  traceId: string | undefined
+): Promise<void> {
+  const existingSession = await lookupThreadSession(env, event.channel, event.thread_ts);
+  if (!existingSession) return;
+
+  const forwarded = collectForwardedMessages(event.attachments);
+  const images = toImageAttachments([...(event.files ?? []), ...forwarded.files], traceId);
+  const content = { text: event.text, images, forwarded };
+  if (!hasRunnableContent(content)) return;
+
+  const channelInfo = await getChannelInfo(env.SLACK_BOT_TOKEN, event.channel).catch(
+    () => undefined
+  );
+  const channelName = channelInfo?.ok ? channelInfo.channel?.name : undefined;
+  const channelDescription = channelInfo?.ok
+    ? channelInfo.channel?.topic?.value || channelInfo.channel?.purpose?.value
+    : undefined;
+  await deliverToMappedSession(
+    {
+      content,
+      user: event.user,
+      channel: event.channel,
+      ts: event.ts,
+      threadTs: event.thread_ts,
+      channelName,
+      channelDescription,
+      env,
+      traceId,
+    },
+    existingSession
+  );
 }
 
 /**
