@@ -36,6 +36,7 @@ export interface AutomationFormValues {
   triggerConfig?: TriggerConfig;
   sentryClientSecret?: string;
   providerSelections: ModelProviderSelections;
+  slackDeliveryChannel: string | null;
 }
 
 export interface AutomationTriggerDraft {
@@ -57,6 +58,7 @@ export interface AutomationFormDraft {
   name: string;
   instructions: string;
   providerSelections: ModelProviderSelections;
+  slackDeliveryChannel: string;
   trigger: AutomationTriggerDraft;
   agent: AutomationAgentDraft;
 }
@@ -102,6 +104,7 @@ export function createAutomationFormDraft(
       harness,
       initialValues.providerSelections ?? {}
     ),
+    slackDeliveryChannel: initialValues.slackDeliveryChannel ?? "",
     trigger: {
       type: initialValues.triggerType ?? "schedule",
       scheduleCron: initialValues.scheduleCron ?? DEFAULT_AUTOMATION_SCHEDULE_CRON,
@@ -260,6 +263,7 @@ function buildSubmissionValues({
     instructions: draft.instructions.trim(),
     triggerType: draft.trigger.type,
     providerSelections: draft.providerSelections,
+    slackDeliveryChannel: draft.slackDeliveryChannel.trim() || null,
   };
 
   if (draft.trigger.type === "schedule") {

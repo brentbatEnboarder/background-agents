@@ -86,6 +86,7 @@ export interface AutomationRow {
   event_type: string | null;
   trigger_config: string | null; // JSON-serialized TriggerConfig
   trigger_auth_data: string | null;
+  slack_delivery_channel?: string | null;
 }
 
 type AutomationListResult = { automations: AutomationRow[] } & (
@@ -260,6 +261,7 @@ export function toAutomation(
     repositories: repositoryRows.map(toAutomationRepository),
     environmentIds: environmentRows.map((environment) => environment.environment_id),
     providerSelections: toProviderSelections(providerAuthRows),
+    slackDeliveryChannel: row.slack_delivery_channel ?? null,
   };
 }
 
@@ -377,8 +379,8 @@ export class AutomationStore {
          (id, name, instructions,
           trigger_type, schedule_cron, schedule_tz, harness, model, reasoning_effort, enabled, next_run_at,
           consecutive_failures, created_by, user_id, created_at, updated_at, deleted_at,
-          event_type, trigger_config, trigger_auth_data)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           event_type, trigger_config, trigger_auth_data, slack_delivery_channel)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .bind(
         row.id,
@@ -400,7 +402,8 @@ export class AutomationStore {
         row.deleted_at,
         row.event_type,
         row.trigger_config,
-        row.trigger_auth_data
+        row.trigger_auth_data,
+        row.slack_delivery_channel ?? null
       );
   }
 
@@ -556,6 +559,7 @@ export class AutomationStore {
       "event_type",
       "trigger_config",
       "trigger_auth_data",
+      "slack_delivery_channel",
     ];
 
     for (const field of allowedFields) {

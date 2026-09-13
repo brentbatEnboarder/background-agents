@@ -36,6 +36,7 @@ function automation(id: string, name: string): AutomationListItem {
     environmentIds: [],
     providerSelections: {},
     recentExecutions: [],
+    slackDeliveryChannel: null,
   };
 }
 

@@ -44,6 +44,8 @@ import {
 import { McpServerStore } from "../db/mcp-servers";
 import { IntegrationSettingsStore, resolveSlackSettings } from "../db/integration-settings";
 import { SessionIndexStore } from "../db/session-index";
+import { AutomationStore } from "../db/automation-store";
+import { automationSlackDeliveryChannelSchema } from "@open-inspect/shared/types/automations";
 import { parsePersistedSandboxSettings } from "../sandbox/settings";
 import { createSourceControlProviderFromEnv, type SourceControlProvider } from "../source-control";
 import { requireRepoSecretsEncryptionKey, requireTokenEncryptionKey } from "../env-validation";
@@ -981,8 +983,17 @@ function createLifecycleManager(deps: LifecycleManagerDeps): SandboxLifecycleMan
   const tokenPresent = !!env.SLACK_BOT_TOKEN;
   const settingsStore = new IntegrationSettingsStore(db);
   const slackAgentNotifyLookup: SlackAgentNotifyLookup = {
-    isEnabledForRepo: async (repoOwner, repoName) => {
+    isEnabledForSession: async (sessionId, repoOwner, repoName) => {
       if (!tokenPresent) return false;
+      const session = await new SessionIndexStore(db).get(sessionId);
+      if (session?.automationId) {
+        const automation = await new AutomationStore(db).getById(session.automationId);
+        if (
+          automationSlackDeliveryChannelSchema.safeParse(automation?.slack_delivery_channel).success
+        ) {
+          return true;
+        }
+      }
       const settings =
         repoOwner && repoName
           ? (await settingsStore.getResolvedConfig("slack", `${repoOwner}/${repoName}`)).settings

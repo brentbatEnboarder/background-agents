@@ -69,6 +69,7 @@ function makeAutomation(overrides: Partial<AutomationListItem> = {}): Automation
     providerSelections: {},
     recentExecutions: [],
     ...overrides,
+    slackDeliveryChannel: overrides.slackDeliveryChannel ?? null,
   };
 }
 

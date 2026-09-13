@@ -14,7 +14,7 @@ import type { FetchClient } from "../platform-ports";
 import { fakeSessionRuntimeDispatch } from "../router.test-support";
 import type { Logger } from "../logger";
 import type { InvocationRunAggregate } from "../db/automation-store";
-import type { SlackAutomationEvent } from "@open-inspect/shared/triggers";
+import type { SlackAutomationEvent, WebhookAutomationEvent } from "@open-inspect/shared/triggers";
 
 const mockCheckRepositoryAccess = vi.hoisted(() => vi.fn());
 const mockResolveSessionProviderAuth = vi.hoisted(() =>
@@ -457,6 +457,28 @@ const sampleSlackAutomation = {
     ],
   }),
 };
+
+const sampleWebhookAutomation = {
+  ...sampleAutomation,
+  trigger_type: "webhook",
+  schedule_cron: null,
+  next_run_at: null,
+  event_type: null,
+  trigger_config: null,
+};
+
+function makeWebhookEvent(): WebhookAutomationEvent {
+  return {
+    source: "webhook",
+    eventType: "webhook.received",
+    automationId: "auto-1",
+    triggerKey: "webhook:idem:snapshot-1",
+    concurrencyKey: "webhook:idem:snapshot-1",
+    body: { snapshotId: "snapshot-1" },
+    contextBlock: "Webhook event",
+    meta: { deliveryId: "snapshot-1", receivedAt: now },
+  };
+}
 
 const sampleSlackPermalink = "https://example.slack.com/archives/C1/p1700000000000200";
 const sampleSlackContextBlock = `A message was posted in #ops.\nPermalink: ${sampleSlackPermalink}`;
@@ -2197,6 +2219,29 @@ describe("Scheduler", () => {
   });
 
   describe("event", () => {
+    it("identifies an active idempotent webhook delivery as deduplicated", async () => {
+      mockStore.getById.mockResolvedValue(sampleWebhookAutomation);
+      mockStore.getActiveRunForKey.mockResolvedValue({ id: "active-run" });
+
+      await expect(createScheduler().event(makeWebhookEvent())).resolves.toEqual({
+        triggered: 0,
+        skipped: 1,
+        steered: 0,
+        deduplicated: 1,
+      });
+    });
+
+    it("does not identify webhook authorization denial as deduplication", async () => {
+      mockStore.getById.mockResolvedValue(sampleWebhookAutomation);
+      mockIsAutomationExecutionAuthorized.mockResolvedValue(false);
+
+      await expect(createScheduler().event(makeWebhookEvent())).resolves.toEqual({
+        triggered: 0,
+        skipped: 1,
+        steered: 0,
+      });
+    });
+
     it.each([
       { trigger_config: "{invalid" },
       { trigger_config: "" },

@@ -7,6 +7,8 @@ import type { ControlPlaneHonoEnv } from "../routing/hono-env";
  */
 
 import {
+  completeExternalUpload,
+  getExternalUploadUrl,
   getPermalink,
   postBlocks,
   sanitizeAgentText,
@@ -14,10 +16,13 @@ import {
   SLACK_DENIAL_STATUS,
   type SlackNotifySuccessOutput,
   type SlackWireDenialReason,
+  uploadToExternalUrl,
 } from "@open-inspect/shared/slack";
 import type { SlackGlobalSettings } from "@open-inspect/shared/types/integrations";
+import { automationSlackDeliveryChannelSchema } from "@open-inspect/shared/types/automations";
 import { IntegrationSettingsStore, resolveSlackSettings } from "../db/integration-settings";
 import { SessionIndexStore } from "../db/session-index";
+import { AutomationStore } from "../db/automation-store";
 import { createLogger } from "../logger";
 import type { Env } from "../types";
 import {
@@ -40,12 +45,15 @@ const RAW_TEXT_INPUT_MAX_LENGTH = 12_000;
 const CHANNEL_INPUT_MAX_LENGTH = 80;
 /** Reason field cap; recorded for audit only. */
 const REASON_MAX_LENGTH = 500;
+export const SLACK_HTML_MAX_BYTES = 5 * 1024 * 1024;
+const MULTIPART_OVERHEAD_MAX_BYTES = 64 * 1024;
 
 interface ParsedBody {
   channel: string;
   text: string;
   threadTs: string | undefined;
   reason: string | undefined;
+  attachment: { filename: string; bytes: Uint8Array } | undefined;
 }
 
 interface AuditFields {
@@ -65,6 +73,12 @@ export async function handleSlackNotify(
 
   const parsed = await parseBody(request);
   if (parsed instanceof Response) return parsed;
+  if (parsed.attachment && ctx.principal?.kind !== "sandbox") {
+    return failureResponse(
+      "feature_disabled",
+      "HTML attachments are available only to the session sandbox."
+    );
+  }
 
   const session = await new SessionIndexStore(ctx.db).get(sessionId);
   if (!session) {
@@ -80,13 +94,44 @@ export async function handleSlackNotify(
     repo: repoScope,
   };
 
+  let automationChannel: string | null = null;
+  if (session.automationId) {
+    const storedChannel = (await new AutomationStore(ctx.db).getById(session.automationId))
+      ?.slack_delivery_channel;
+    if (storedChannel != null) {
+      const channel = automationSlackDeliveryChannelSchema.safeParse(storedChannel);
+      if (!channel.success) {
+        return failureResponse("invalid_input", "Automation Slack destination is invalid.");
+      }
+      automationChannel = channel.data;
+    }
+  }
+  if (parsed.attachment && !automationChannel) {
+    return failureResponse(
+      "feature_disabled",
+      "HTML attachments require an automation with a fixed Slack destination."
+    );
+  }
+  if (automationChannel && ctx.principal?.kind !== "sandbox") {
+    return failureResponse(
+      "feature_disabled",
+      "Automation-owned Slack delivery is available only to the session sandbox."
+    );
+  }
+  const effective = {
+    ...parsed,
+    channel: automationChannel ?? parsed.channel,
+    threadTs: parsed.attachment ? undefined : parsed.threadTs,
+    reason: parsed.attachment ? undefined : parsed.reason,
+  };
+
   const token = env.SLACK_BOT_TOKEN;
   if (!token) {
     // Error (not warn): a missing token is a deployment misconfig and must reach alerting.
     logger.error("Slack notification denied: SLACK_BOT_TOKEN is not configured", {
       session_id: sessionId,
       reason: "feature_unavailable",
-      channel_input: parsed.channel,
+      channel_input: effective.channel,
       request_reason: parsed.reason ?? null,
       request_id: ctx.request_id,
       trace_id: ctx.trace_id,
@@ -95,21 +140,23 @@ export async function handleSlackNotify(
     return failureResponse("feature_unavailable", "Slack bot token is not configured.");
   }
 
-  const settingsStore = new IntegrationSettingsStore(ctx.db);
-  const settings = repoScope
-    ? (await settingsStore.getResolvedConfig("slack", repoScope)).settings
-    : ((await settingsStore.getGlobal("slack"))?.defaults ?? {});
-  const { agentNotificationsEnabled, mentionsPolicy } = resolveSlackSettings(
-    settings as Partial<SlackGlobalSettings>
-  );
-  if (!agentNotificationsEnabled) {
-    logDenial(sessionId, ctx, parsed, audit, "feature_disabled");
-    return failureResponse(
-      "feature_disabled",
-      repoScope
-        ? "Slack agent notifications are disabled for this repository."
-        : "Slack agent notifications are disabled globally."
-    );
+  let mentionsPolicy: SlackGlobalSettings["mentionsPolicy"] = "strip";
+  if (!automationChannel) {
+    const settingsStore = new IntegrationSettingsStore(ctx.db);
+    const settings = repoScope
+      ? (await settingsStore.getResolvedConfig("slack", repoScope)).settings
+      : ((await settingsStore.getGlobal("slack"))?.defaults ?? {});
+    const resolved = resolveSlackSettings(settings as Partial<SlackGlobalSettings>);
+    mentionsPolicy = resolved.mentionsPolicy;
+    if (!resolved.agentNotificationsEnabled) {
+      logDenial(sessionId, ctx, effective, audit, "feature_disabled");
+      return failureResponse(
+        "feature_disabled",
+        repoScope
+          ? "Slack agent notifications are disabled for this repository."
+          : "Slack agent notifications are disabled globally."
+      );
+    }
   }
 
   const sanitized = sanitizeAgentText(parsed.text, {
@@ -133,25 +180,63 @@ export async function handleSlackNotify(
     webAppUrl: env.WEB_APP_URL,
   });
   // Without top-level text, Slack derives screen-reader text from the blocks.
-  const post = await postBlocks(token, parsed.channel, blocks, {
-    thread_ts: parsed.threadTs,
+  const post = await postBlocks(token, effective.channel, blocks, {
+    thread_ts: effective.threadTs,
     signal: request.signal,
   });
 
   if (!post.ok) {
     const reasonCode = mapSlackError(post.error);
-    logDenial(sessionId, ctx, parsed, audit, reasonCode, post.retryAfter);
+    logDenial(sessionId, ctx, effective, audit, reasonCode, post.retryAfter);
     return failureResponse(reasonCode, post.error, post.retryAfter);
   }
 
   const channelId = post.channel;
   const messageTs = post.ts;
+  if (parsed.attachment) {
+    const uploadUrl = await getExternalUploadUrl(token, {
+      filename: parsed.attachment.filename,
+      length: parsed.attachment.bytes.byteLength,
+      signal: request.signal,
+    });
+    if (!uploadUrl.ok) {
+      const reasonCode = mapSlackError(uploadUrl.error);
+      logDenial(sessionId, ctx, effective, audit, reasonCode, uploadUrl.retryAfter);
+      return failureResponse(reasonCode, uploadUrl.error, uploadUrl.retryAfter);
+    }
+    const upload = await uploadToExternalUrl(
+      uploadUrl.upload_url,
+      parsed.attachment.bytes,
+      "text/html; charset=utf-8",
+      request.signal
+    );
+    if (!upload.ok) {
+      const reasonCode = mapSlackError(upload.error);
+      logDenial(sessionId, ctx, effective, audit, reasonCode, upload.retryAfter);
+      return failureResponse(reasonCode, upload.error, upload.retryAfter);
+    }
+    const complete = await completeExternalUpload(token, {
+      files: [{ id: uploadUrl.file_id, title: parsed.attachment.filename }],
+      channelId,
+      threadTs: messageTs,
+      signal: request.signal,
+    });
+    if (!complete.ok) {
+      const reasonCode = mapSlackError(complete.error);
+      logDenial(sessionId, ctx, effective, audit, reasonCode, complete.retryAfter);
+      return failureResponse(reasonCode, complete.error, complete.retryAfter);
+    }
+    if (!complete.files.some(({ id }) => id === uploadUrl.file_id)) {
+      logDenial(sessionId, ctx, effective, audit, "slack_api_error");
+      return failureResponse("slack_api_error", "Slack did not confirm the uploaded file.");
+    }
+  }
   const permalinkResp = await getPermalink(token, channelId, messageTs, { signal: request.signal });
   const permalink = permalinkResp.ok ? permalinkResp.permalink : "";
 
   const result: SlackNotifySuccessOutput = {
     ok: true,
-    channelInput: parsed.channel,
+    channelInput: effective.channel,
     channelId,
     messageTs,
     permalink,
@@ -166,13 +251,13 @@ export async function handleSlackNotify(
   logger.info("Slack notification posted", {
     event: "slack_notify.success",
     session_id: sessionId,
-    channel_input: parsed.channel,
+    channel_input: effective.channel,
     channel_id: channelId,
     message_ts: messageTs,
     truncated: sanitized.truncated,
     stripped_broadcasts: sanitized.strippedBroadcasts,
     mentions_modified: sanitized.mentionsModified,
-    request_reason: parsed.reason ?? null,
+    request_reason: effective.reason ?? null,
     request_id: ctx.request_id,
     trace_id: ctx.trace_id,
     ...audit,
@@ -182,6 +267,9 @@ export async function handleSlackNotify(
 }
 
 async function parseBody(request: Request): Promise<ParsedBody | Response> {
+  if (request.headers.get("content-type")?.toLowerCase().startsWith("multipart/form-data")) {
+    return parseMultipartBody(request);
+  }
   let raw: unknown;
   try {
     raw = await request.json();
@@ -222,6 +310,111 @@ async function parseBody(request: Request): Promise<ParsedBody | Response> {
     text,
     threadTs,
     reason,
+    attachment: undefined,
+  };
+}
+
+async function parseMultipartBody(request: Request): Promise<ParsedBody | Response> {
+  const maxBodyBytes = SLACK_HTML_MAX_BYTES + MULTIPART_OVERHEAD_MAX_BYTES;
+  const contentLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > maxBodyBytes) {
+    return failureResponse("invalid_input", "Multipart body is too large.");
+  }
+  const reader = request.body?.getReader();
+  if (!reader) return failureResponse("invalid_input", "Multipart body is required.");
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    length += value.byteLength;
+    if (length > maxBodyBytes) {
+      await reader.cancel();
+      return failureResponse("invalid_input", "Multipart body is too large.");
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  let form: FormData;
+  try {
+    form = await new Response(bytes, {
+      headers: { "Content-Type": request.headers.get("content-type") ?? "" },
+    }).formData();
+  } catch {
+    return failureResponse("invalid_input", "Body must be valid multipart form data.");
+  }
+  const allowedFields = new Set(["channel", "text", "thread_ts", "reason", "file"]);
+  const counts = new Map<string, number>();
+  let attachmentFile: File | undefined;
+  for (const [key, value] of form.entries()) {
+    if (!allowedFields.has(key))
+      return failureResponse("invalid_input", "Unknown multipart field.");
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+    if (typeof value !== "string") {
+      if (key !== "file" || attachmentFile) {
+        return failureResponse("invalid_input", "Exactly one HTML file is allowed.");
+      }
+      attachmentFile = value;
+    }
+  }
+  if ([...counts.values()].some((count) => count > 1) || !attachmentFile) {
+    return failureResponse(
+      "invalid_input",
+      "Exactly one value per field and one HTML file are required."
+    );
+  }
+  if (
+    !attachmentFile.name.toLowerCase().endsWith(".html") ||
+    attachmentFile.type.toLowerCase() !== "text/html" ||
+    attachmentFile.size === 0 ||
+    attachmentFile.size > SLACK_HTML_MAX_BYTES
+  ) {
+    return failureResponse(
+      "invalid_input",
+      `file must be a non-empty UTF-8 .html file no larger than ${SLACK_HTML_MAX_BYTES} bytes.`
+    );
+  }
+  const attachmentBytes = new Uint8Array(await attachmentFile.arrayBuffer());
+  try {
+    const html = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(
+      attachmentBytes
+    );
+    if (html.includes("\0")) throw new Error("NUL is not allowed");
+    if (!/^\s*(?:<!doctype\s+html\b[^>]*>\s*)?<html\b/i.test(html)) {
+      return failureResponse("invalid_input", "file must contain an HTML document.");
+    }
+  } catch {
+    return failureResponse("invalid_input", "file must contain valid UTF-8 without NUL bytes.");
+  }
+
+  const text = typeof form.get("text") === "string" ? String(form.get("text")) : "";
+  const channel = typeof form.get("channel") === "string" ? String(form.get("channel")).trim() : "";
+  if (!text || text.length > RAW_TEXT_INPUT_MAX_LENGTH) {
+    return failureResponse(
+      "invalid_input",
+      `text must be 1..${RAW_TEXT_INPUT_MAX_LENGTH} characters.`
+    );
+  }
+  if (!channel || channel.length > CHANNEL_INPUT_MAX_LENGTH) {
+    return failureResponse(
+      "invalid_input",
+      `channel must be 1..${CHANNEL_INPUT_MAX_LENGTH} characters.`
+    );
+  }
+  const threadTs = typeof form.get("thread_ts") === "string" ? String(form.get("thread_ts")) : "";
+  const rawReason = typeof form.get("reason") === "string" ? String(form.get("reason")) : "";
+  return {
+    channel,
+    text,
+    threadTs: threadTs || undefined,
+    reason: rawReason ? rawReason.slice(0, REASON_MAX_LENGTH) : undefined,
+    attachment: { filename: attachmentFile.name, bytes: attachmentBytes },
   };
 }
 

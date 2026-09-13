@@ -187,6 +187,7 @@ export interface SchedulerEventResult {
   triggered: number;
   skipped: number;
   steered: number;
+  deduplicated?: number;
 }
 
 export interface SchedulerTriggerResult {
@@ -1031,6 +1032,7 @@ export class Scheduler {
 
     let triggered = 0;
     let skipped = 0;
+    let deduplicated = 0;
     // Follow-ups routed into an already-active thread's session (slack steering).
     let steered = 0;
     // Surface at most one concurrency-skip ephemeral per event, even when
@@ -1133,12 +1135,18 @@ export class Scheduler {
           }
           break;
         case "skipped":
+          if (event.source === "webhook" && event.triggerKey.startsWith("webhook:idem:")) {
+            deduplicated++;
+          }
           if (event.source === "slack") {
             concurrencySkipped = true;
           }
           skipped++;
           break;
         case "deduplicated":
+          if (event.source === "webhook") deduplicated++;
+          skipped++;
+          break;
         case "blocked":
           skipped++;
           break;
@@ -1168,7 +1176,12 @@ export class Scheduler {
       candidates: candidates.length,
     });
 
-    return { triggered, skipped, steered };
+    return {
+      triggered,
+      skipped,
+      steered,
+      ...(deduplicated > 0 ? { deduplicated } : {}),
+    };
   }
 
   // ─── Manual trigger ──────────────────────────────────────────────────────

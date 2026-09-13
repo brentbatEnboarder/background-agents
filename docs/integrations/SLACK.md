@@ -1,5 +1,13 @@
 # Slack Integration
 
+Automation sessions may use an optional fixed Slack delivery channel configured on the automation.
+That destination is resolved server-side and does not require the repository/global
+agent-notification switch. Only the authenticated session sandbox may use that automation-owned
+destination. In those sessions `slack-notify` may attach one non-empty UTF-8 `.html` document up to
+5 MiB; the summary is posted at the configured destination and the file is finalized in its thread.
+Ordinary sessions retain text-only behavior, and partial or ambiguous attachment delivery is not
+retried.
+
 Open-Inspect's Slack integration lets your team start coding sessions from Slack, continue work in
 the same Slack thread, set personal defaults in App Home, and ask agents to post Slack updates when
 that workflow is enabled.

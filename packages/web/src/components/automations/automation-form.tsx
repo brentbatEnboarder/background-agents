@@ -53,6 +53,9 @@ export function AutomationForm({ mode, initialValues, onSubmit, submitting }: Au
   const [providerSelections, setProviderSelections] = useState(initialDraft.providerSelections);
   const [agent, setAgent] = useState(initialDraft.agent);
   const [instructions, setInstructions] = useState(initialDraft.instructions);
+  const [slackDeliveryChannel, setSlackDeliveryChannel] = useState(
+    initialDraft.slackDeliveryChannel
+  );
   const [trigger, setTrigger] = useState(initialDraft.trigger);
   const repositoryRequired = requiresRepositoryContext(trigger.type);
 
@@ -111,6 +114,7 @@ export function AutomationForm({ mode, initialValues, onSubmit, submitting }: Au
       name,
       instructions,
       providerSelections,
+      slackDeliveryChannel,
       agent,
       trigger,
     },
@@ -170,6 +174,27 @@ export function AutomationForm({ mode, initialValues, onSubmit, submitting }: Au
         multiTargetAllowed={multiRepoAllowed}
         repositoryRequired={repositoryRequired}
       />
+
+      <div>
+        <label
+          htmlFor="automation-slack-delivery-channel"
+          className="block text-sm font-medium text-foreground mb-1.5"
+        >
+          Slack delivery channel
+        </label>
+        <Input
+          id="automation-slack-delivery-channel"
+          type="text"
+          value={slackDeliveryChannel}
+          onChange={(event) => setSlackDeliveryChannel(event.target.value)}
+          placeholder="C0123456789"
+          pattern="[CG][A-Z0-9]{8,}"
+        />
+        <FieldDescription className="mt-1.5">
+          Optional fixed channel ID for automation-owned Slack delivery. The agent cannot override
+          it.
+        </FieldDescription>
+      </div>
 
       <AutomationAgentFields
         value={agent}

@@ -295,6 +295,7 @@ async function handleCreateAutomation(
     event_type: body.eventType ?? null,
     trigger_config: body.triggerConfig ? JSON.stringify(body.triggerConfig) : null,
     trigger_auth_data: triggerAuthData,
+    slack_delivery_channel: body.slackDeliveryChannel ?? null,
   };
 
   // Persist the automation, its repository selection, and (for slack_event)
@@ -502,6 +503,9 @@ async function handleUpdateAutomation(
   if (body.model !== undefined) updateFields.model = nextModel;
   if (body.reasoningEffort !== undefined || body.model !== undefined) {
     updateFields.reasoning_effort = resolvedReasoningEffort;
+  }
+  if (body.slackDeliveryChannel !== undefined) {
+    updateFields.slack_delivery_channel = body.slackDeliveryChannel;
   }
 
   // Repository-set edits are UNCONDITIONAL — no cardinality freeze and no

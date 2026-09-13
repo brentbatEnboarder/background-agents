@@ -3,9 +3,13 @@
  * workspace, so REASON_GUIDANCE keys must stay symmetric with
  * SLACK_DENIAL_REASONS in @open-inspect/shared/slack/types by hand.
  */
+import { readFile, stat } from "node:fs/promises";
+import { basename } from "node:path";
 import { tool } from "@opencode-ai/plugin";
 import { z } from "zod";
 import { bridgeFetch } from "./_bridge-client.js";
+
+const HTML_MAX_BYTES = 5 * 1024 * 1024;
 
 const REASON_GUIDANCE = {
   feature_unavailable:
@@ -65,7 +69,7 @@ async function readErrorBody(response) {
 export default tool({
   name: "slack-notify",
   description:
-    "Post a message to a Slack channel that the user has authorized. Use this only when the user has explicitly asked you to notify Slack — this is an externally-visible action that other humans will see. The user must tell you which channel; do not guess. The bot must already be invited to the channel; if you get channel_not_found_or_forbidden, ask the user to invite the bot. Plain text + Slack mrkdwn formatting only (bold *...*, italic _..._, inline code `...`, fenced blocks, lists, blockquotes). The server attaches the attribution footer and View Session button — do not fabricate them.",
+    "Post a message to a Slack channel that the user has authorized. For ordinary sessions, use this only when the user explicitly asks you to notify Slack; use the channel they specify and do not guess. The bot must already be invited to the channel. Plain text and Slack mrkdwn only; the server adds attribution. A destination-bound automation always uses its configured channel regardless of the channel argument and may attach one HTML file, which is finalized in the top-level message thread.",
   args: {
     channel: z
       .string()
@@ -89,18 +93,59 @@ export default tool({
       .describe(
         "Optional short note explaining why you are posting. Recorded server-side for audit; not shown in Slack."
       ),
+    filePath: z
+      .string()
+      .optional()
+      .describe(
+        "Optional absolute path to one non-empty UTF-8 .html file up to 5 MiB. Available only to destination-bound automations."
+      ),
   },
   async execute(args) {
+    let body;
+    if (args.filePath) {
+      try {
+        const info = await stat(args.filePath);
+        if (!info.isFile() || info.size === 0 || info.size > HTML_MAX_BYTES) {
+          return buildFailureEnvelope(
+            "invalid_input",
+            "HTML file must be non-empty and at most 5 MiB"
+          );
+        }
+        if (!args.filePath.toLowerCase().endsWith(".html")) {
+          return buildFailureEnvelope("invalid_input", "Attachment must use the .html extension");
+        }
+        const bytes = await readFile(args.filePath);
+        const html = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        if (html.includes("\0")) {
+          return buildFailureEnvelope("invalid_input", "HTML file must not contain NUL bytes");
+        }
+        if (!/^\s*(?:<!doctype\s+html\b[^>]*>\s*)?<html\b/i.test(html)) {
+          return buildFailureEnvelope("invalid_input", "Attachment must contain an HTML document");
+        }
+        const form = new FormData();
+        form.set("channel", args.channel);
+        form.set("text", args.text);
+        if (args.thread_ts) form.set("thread_ts", args.thread_ts);
+        if (args.reason) form.set("reason", args.reason);
+        form.set("file", new Blob([bytes], { type: "text/html" }), basename(args.filePath));
+        body = form;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return buildFailureEnvelope("invalid_input", message);
+      }
+    } else {
+      body = JSON.stringify({
+        channel: args.channel,
+        text: args.text,
+        thread_ts: args.thread_ts,
+        reason: args.reason,
+      });
+    }
     let response;
     try {
       response = await bridgeFetch("/slack-notify", {
         method: "POST",
-        body: JSON.stringify({
-          channel: args.channel,
-          text: args.text,
-          thread_ts: args.thread_ts,
-          reason: args.reason,
-        }),
+        body,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

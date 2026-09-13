@@ -32,10 +32,23 @@ const automation = {
   repositories: [{ repoOwner: "acme", repoName: "web", repoId: 1, baseBranch: "main" }],
   environmentIds: [],
   providerSelections: {},
+  slackDeliveryChannel: null,
   recentExecutions: [],
 };
 
 describe("listAutomationsResponseSchema", () => {
+  it("defaults a pre-migration missing Slack destination to null", () => {
+    const { slackDeliveryChannel: _, ...legacyAutomation } = automation;
+
+    expect(
+      listAutomationsResponseSchema.parse({
+        automations: [legacyAutomation],
+        hasMore: false,
+        nextCursor: null,
+      }).automations[0]?.slackDeliveryChannel
+    ).toBeNull();
+  });
+
   it("accepts a valid cursor page", () => {
     expect(
       listAutomationsResponseSchema.parse({
@@ -168,6 +181,32 @@ describe("automation provider selection contracts", () => {
 });
 
 describe("automation request boundary contracts", () => {
+  it("accepts only bounded Slack channel IDs and supports clearing on update", () => {
+    expect(
+      createAutomationRequestSchema.parse({
+        name: "Delivery",
+        instructions: "Deliver",
+        slackDeliveryChannel: "C0C0MEE8F7E",
+      }).slackDeliveryChannel
+    ).toBe("C0C0MEE8F7E");
+    expect(updateAutomationRequestSchema.parse({ slackDeliveryChannel: null })).toEqual({
+      slackDeliveryChannel: null,
+    });
+    expect(
+      createAutomationRequestSchema.parse({
+        name: "Delivery",
+        instructions: "Deliver",
+        slackDeliveryChannel: null,
+      })
+    ).toMatchObject({ slackDeliveryChannel: null });
+    expect(
+      createAutomationRequestSchema.safeParse({
+        name: "Delivery",
+        instructions: "Deliver",
+        slackDeliveryChannel: "#marketing",
+      }).success
+    ).toBe(false);
+  });
   it.each([createAutomationRequestSchema, updateAutomationRequestSchema])(
     "accepts canonical, unique environment ids",
     (schema) => {

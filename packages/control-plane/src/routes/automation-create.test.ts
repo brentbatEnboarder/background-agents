@@ -206,6 +206,19 @@ describe("automation create route", () => {
       );
     });
 
+    it("persists the fixed Slack delivery channel", async () => {
+      mockStore.getById.mockResolvedValue(sampleRow);
+
+      const res = await callRoute("POST", "/automations", {
+        body: { ...validBody, slackDeliveryChannel: "C0C0MEE8F7E" },
+      });
+
+      expect(res.status).toBe(201);
+      expect(mockStore.bindAutomationInsert).toHaveBeenCalledWith(
+        expect.objectContaining({ slack_delivery_channel: "C0C0MEE8F7E" })
+      );
+    });
+
     it("rejects partial create payloads before persistence", async () => {
       const res = await callRoute("POST", "/automations", {
         body: { instructions: "Run tests" },

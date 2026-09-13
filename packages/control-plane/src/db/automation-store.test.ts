@@ -156,6 +156,18 @@ describe("toAutomation", () => {
     expect(automation.createdBy).toBe("user-1");
     expect(automation.userId).toBe("11111111111111111111111111111111");
     expect(automation.environmentIds).toEqual([]);
+    expect(automation.slackDeliveryChannel).toBeNull();
+  });
+
+  it("hydrates the fixed Slack delivery channel", () => {
+    const automation = toAutomation(
+      { ...sampleRow, slack_delivery_channel: "C0C0MEE8F7E" },
+      [],
+      [],
+      []
+    );
+
+    expect(automation.slackDeliveryChannel).toBe("C0C0MEE8F7E");
   });
 
   it("maps environment rows to environmentIds", () => {

@@ -41,6 +41,11 @@ export const MAX_AUTOMATION_REPOSITORIES = MAX_TARGET_REPOSITORIES;
 /** Maximum length of an automation's instruction prompt. */
 export const MAX_AUTOMATION_INSTRUCTIONS_LENGTH = 15_000;
 
+/** Fixed Slack channel destination for automation-owned delivery. */
+export const automationSlackDeliveryChannelSchema = z
+  .string()
+  .regex(/^[CG][A-Z0-9]{8,}$/, "must be a Slack channel ID");
+
 /**
  * Validate target-count rules shared by automation clients and the API.
  * Repository-scoped triggers bind to exactly one repository and no
@@ -126,6 +131,7 @@ const automationSchema = z.object({
   repositories: z.array(automationRepositorySchema),
   environmentIds: z.array(z.string()),
   providerSelections: modelProviderSelectionsSchema,
+  slackDeliveryChannel: automationSlackDeliveryChannelSchema.nullable().default(null),
 });
 
 export type Automation = z.infer<typeof automationSchema>;
@@ -188,6 +194,7 @@ export const createAutomationRequestSchema = z.object({
   environmentIds: automationEnvironmentIdsSchema.optional(),
   /** Complete pin set. Omission creates the automation without pins. */
   providerSelections: modelProviderSelectionsSchema.optional(),
+  slackDeliveryChannel: automationSlackDeliveryChannelSchema.nullable().optional(),
 });
 export type CreateAutomationRequest = z.input<typeof createAutomationRequestSchema>;
 
@@ -207,6 +214,8 @@ export const updateAutomationRequestSchema = z.object({
   environmentIds: automationEnvironmentIdsSchema.optional(),
   /** Replaces every provider pin when present; an empty map clears all pins. */
   providerSelections: modelProviderSelectionsSchema.optional(),
+  /** Null clears the automation-owned destination. */
+  slackDeliveryChannel: automationSlackDeliveryChannelSchema.nullable().optional(),
 });
 export type UpdateAutomationRequest = z.input<typeof updateAutomationRequestSchema>;
 

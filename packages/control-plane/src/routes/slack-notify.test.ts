@@ -5,6 +5,7 @@ import { handleSlackNotify } from "./slack-notify";
 import type { RequestContext } from "./shared";
 import type { SqlDatabase } from "../db/sql-database";
 import type { Env } from "../types";
+import type { Principal } from "../auth/principal";
 import { fakeSessionRuntimeDispatch, TEST_BACKGROUND_TASK_CONTEXT } from "../router.test-support";
 
 const sessionStoreMock = {
@@ -14,6 +15,10 @@ const sessionStoreMock = {
 const integrationStoreMock = {
   getResolvedConfig: vi.fn(),
   getGlobal: vi.fn(),
+};
+
+const automationStoreMock = {
+  getById: vi.fn(),
 };
 
 vi.mock("../db/session-index", async (importOriginal) => {
@@ -36,6 +41,16 @@ vi.mock("../db/integration-settings", async (importOriginal) => {
   };
 });
 
+vi.mock("../db/automation-store", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    AutomationStore: vi.fn().mockImplementation(function () {
+      return automationStoreMock;
+    }),
+  };
+});
+
 const fetchMock = vi.fn();
 
 const sessionFetchMock = vi.fn();
@@ -43,12 +58,13 @@ const sessionFetchMock = vi.fn();
 const PATH = "/sessions/sess-1/slack-notify";
 const PATTERN = /^\/sessions\/(?<id>[^/]+)\/slack-notify$/;
 
-function createCtx(): RequestContext {
+function createCtx(principal?: Principal): RequestContext {
   return {
     trace_id: "trace-1",
     request_id: "req-1",
     db: {} as SqlDatabase,
     executionCtx: TEST_BACKGROUND_TASK_CONTEXT,
+    ...(principal ? { principal } : {}),
     metrics: {
       sqlQueries: [],
       spans: {},
@@ -71,7 +87,11 @@ function createEnv(overrides?: Partial<Env>): Env {
   } as Env;
 }
 
-async function callHandler(body: unknown, envOverrides?: Partial<Env>): Promise<Response> {
+async function callHandler(
+  body: unknown,
+  envOverrides?: Partial<Env>,
+  principal?: Principal
+): Promise<Response> {
   const params = { id: PATH.match(PATTERN)!.groups!.id };
   const init: RequestInit = {
     method: "POST",
@@ -82,7 +102,23 @@ async function callHandler(body: unknown, envOverrides?: Partial<Env>): Promise<
     new Request(`https://test.local${PATH}`, init),
     createEnv(envOverrides),
     params,
-    createCtx()
+    createCtx(principal)
+  );
+}
+
+async function callMultipart(
+  fields: { channel?: string; text?: string; file?: File },
+  envOverrides?: Partial<Env>
+): Promise<Response> {
+  const form = new FormData();
+  if (fields.channel !== undefined) form.set("channel", fields.channel);
+  if (fields.text !== undefined) form.set("text", fields.text);
+  if (fields.file) form.set("file", fields.file);
+  return handleSlackNotify(
+    new Request(`https://test.local${PATH}`, { method: "POST", body: form }),
+    createEnv(envOverrides),
+    { id: "sess-1" },
+    createCtx({ kind: "sandbox", sessionId: "sess-1" })
   );
 }
 
@@ -93,6 +129,7 @@ function seedActiveSession(opts?: {
   status?: SessionStatus;
   repoOwner?: string | null;
   repoName?: string | null;
+  automationId?: string | null;
 }) {
   sessionStoreMock.get.mockResolvedValue({
     id: "sess-1",
@@ -107,6 +144,7 @@ function seedActiveSession(opts?: {
     spawnSource: opts?.spawnSource ?? "user",
     spawnDepth: 0,
     userId: opts?.userId ?? "user-1",
+    automationId: opts?.automationId ?? null,
     createdAt: 1,
     updatedAt: 1,
   });
@@ -161,6 +199,216 @@ function lastLogPayload(
 }
 
 describe("handleSlackNotify", () => {
+  it("uses the automation destination even when the model supplies another channel", async () => {
+    seedActiveSession({ automationId: "auto-1" });
+    automationStoreMock.getById.mockResolvedValue({
+      id: "auto-1",
+      slack_delivery_channel: "C0C0MEE8F7E",
+    });
+    mockSlackResponse({ body: { ok: true, channel: "C0C0MEE8F7E", ts: "1.2" } });
+    mockSlackResponse({ body: { ok: true, permalink: "https://x.slack.com/p", channel: "C1" } });
+
+    const response = await callHandler({ channel: "CWRONG123", text: "hello" }, undefined, {
+      kind: "sandbox",
+      sessionId: "sess-1",
+    });
+
+    expect(response.status).toBe(200);
+    expect(integrationStoreMock.getResolvedConfig).not.toHaveBeenCalled();
+    const sent = JSON.parse(fetchMock.mock.calls[0][1].body as string) as { channel: string };
+    expect(sent.channel).toBe("C0C0MEE8F7E");
+  });
+
+  it("posts a top-level summary then finalizes one HTML file in its thread", async () => {
+    seedActiveSession({ automationId: "auto-1" });
+    automationStoreMock.getById.mockResolvedValue({
+      id: "auto-1",
+      slack_delivery_channel: "C0C0MEE8F7E",
+    });
+    mockSlackResponse({ body: { ok: true, channel: "C0C0MEE8F7E", ts: "1.2" } });
+    mockSlackResponse({
+      body: { ok: true, upload_url: "https://upload.slack.test/u", file_id: "F1" },
+    });
+    fetchMock.mockResolvedValueOnce(new Response("", { status: 200 }));
+    mockSlackResponse({ body: { ok: true, files: [{ id: "F1", title: "report.html" }] } });
+    mockSlackResponse({ body: { ok: true, permalink: "https://x.slack.com/p", channel: "C1" } });
+
+    const response = await callMultipart({
+      channel: "CWRONG123",
+      text: "Weekly report",
+      file: new File(["<html>report</html>"], "report.html", { type: "text/html" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    const post = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Record<string, unknown>;
+    expect(post.channel).toBe("C0C0MEE8F7E");
+    expect(post.thread_ts).toBeUndefined();
+    expect(String(fetchMock.mock.calls[1][0])).toContain("files.getUploadURLExternal");
+    expect(String(fetchMock.mock.calls[2][0])).toBe("https://upload.slack.test/u");
+    const complete = JSON.parse(fetchMock.mock.calls[3][1].body as string) as {
+      channel_id: string;
+      thread_ts: string;
+    };
+    expect(complete).toMatchObject({ channel_id: "C0C0MEE8F7E", thread_ts: "1.2" });
+  });
+
+  it("rejects an attachment from an ordinary session before calling Slack", async () => {
+    seedActiveSession();
+
+    const response = await callMultipart({
+      channel: "C12345678",
+      text: "Weekly report",
+      file: new File(["<html>report</html>"], "report.html", { type: "text/html" }),
+    });
+
+    expect(response.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an attachment requested by a collaborating user before calling Slack", async () => {
+    seedActiveSession({ automationId: "auto-1" });
+    automationStoreMock.getById.mockResolvedValue({
+      id: "auto-1",
+      slack_delivery_channel: "C0C0MEE8F7E",
+    });
+    const form = new FormData();
+    form.set("channel", "CWRONG123");
+    form.set("text", "Weekly report");
+    form.set("file", new File(["<html>report</html>"], "report.html", { type: "text/html" }));
+
+    const response = await handleSlackNotify(
+      new Request(`https://test.local${PATH}`, { method: "POST", body: form }),
+      createEnv(),
+      { id: "sess-1" },
+      createCtx({ kind: "user", userId: "user-2" })
+    );
+
+    expect(response.status).toBe(403);
+    expect(sessionStoreMock.get).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects automation-owned text delivery requested by a collaborating user", async () => {
+    seedActiveSession({ automationId: "auto-1" });
+    automationStoreMock.getById.mockResolvedValue({
+      id: "auto-1",
+      slack_delivery_channel: "C0C0MEE8F7E",
+    });
+
+    const response = await callHandler({ channel: "CWRONG123", text: "Weekly report" }, undefined, {
+      kind: "user",
+      userId: "user-2",
+    });
+
+    expect(response.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["empty", new File([], "report.html", { type: "text/html" })],
+    [
+      "oversized",
+      new File([new Uint8Array(5 * 1024 * 1024 + 1)], "report.html", { type: "text/html" }),
+    ],
+    ["extension", new File(["report"], "report.txt", { type: "text/html" })],
+    ["mime", new File(["report"], "report.html", { type: "text/plain" })],
+    ["document", new File(["report"], "report.html", { type: "text/html" })],
+    ["utf8", new File([new Uint8Array([0xff])], "report.html", { type: "text/html" })],
+    ["nul", new File(["<html>\0</html>"], "report.html", { type: "text/html" })],
+  ])("rejects invalid HTML attachment: %s", async (_case, file) => {
+    const response = await callMultipart({ channel: "C12345678", text: "Report", file });
+
+    expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("reports partial delivery failure without attempting finalization", async () => {
+    seedActiveSession({ automationId: "auto-1" });
+    automationStoreMock.getById.mockResolvedValue({
+      id: "auto-1",
+      slack_delivery_channel: "C0C0MEE8F7E",
+    });
+    mockSlackResponse({ body: { ok: true, channel: "C0C0MEE8F7E", ts: "1.2" } });
+    mockSlackResponse({ body: { ok: false, error: "invalid_response" } });
+
+    const response = await callMultipart({
+      channel: "C12345678",
+      text: "Weekly report",
+      file: new File(["<html>report</html>"], "report.html", { type: "text/html" }),
+    });
+
+    expect(response.status).toBe(502);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports upload failure without attempting finalization", async () => {
+    seedActiveSession({ automationId: "auto-1" });
+    automationStoreMock.getById.mockResolvedValue({
+      id: "auto-1",
+      slack_delivery_channel: "C0C0MEE8F7E",
+    });
+    mockSlackResponse({ body: { ok: true, channel: "C0C0MEE8F7E", ts: "1.2" } });
+    mockSlackResponse({
+      body: { ok: true, upload_url: "https://upload.slack.test/u", file_id: "F1" },
+    });
+    fetchMock.mockResolvedValueOnce(new Response("", { status: 500 }));
+
+    const response = await callMultipart({
+      channel: "C12345678",
+      text: "Weekly report",
+      file: new File(["<html>report</html>"], "report.html", { type: "text/html" }),
+    });
+
+    expect(response.status).toBe(502);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("reports finalization failure after upload", async () => {
+    seedActiveSession({ automationId: "auto-1" });
+    automationStoreMock.getById.mockResolvedValue({
+      id: "auto-1",
+      slack_delivery_channel: "C0C0MEE8F7E",
+    });
+    mockSlackResponse({ body: { ok: true, channel: "C0C0MEE8F7E", ts: "1.2" } });
+    mockSlackResponse({
+      body: { ok: true, upload_url: "https://upload.slack.test/u", file_id: "F1" },
+    });
+    fetchMock.mockResolvedValueOnce(new Response("", { status: 200 }));
+    mockSlackResponse({ body: { ok: false, error: "delivery_unknown" } });
+
+    const response = await callMultipart({
+      channel: "C12345678",
+      text: "Weekly report",
+      file: new File(["<html>report</html>"], "report.html", { type: "text/html" }),
+    });
+
+    expect(response.status).toBe(502);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("fails closed when Slack finalizes without confirming the uploaded file", async () => {
+    seedActiveSession({ automationId: "auto-1" });
+    automationStoreMock.getById.mockResolvedValue({
+      id: "auto-1",
+      slack_delivery_channel: "C0C0MEE8F7E",
+    });
+    mockSlackResponse({ body: { ok: true, channel: "C0C0MEE8F7E", ts: "1.2" } });
+    mockSlackResponse({
+      body: { ok: true, upload_url: "https://upload.slack.test/u", file_id: "F1" },
+    });
+    fetchMock.mockResolvedValueOnce(new Response("", { status: 200 }));
+    mockSlackResponse({ body: { ok: true, files: [] } });
+
+    const response = await callMultipart({
+      channel: "C12345678",
+      text: "Weekly report",
+      file: new File(["<html>report</html>"], "report.html", { type: "text/html" }),
+    });
+
+    expect(response.status).toBe(502);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
   it("happy path posts no events to the DO — the agent's tool_call is the source of truth", async () => {
     seedActiveSession();
     integrationStoreMock.getResolvedConfig.mockResolvedValue({

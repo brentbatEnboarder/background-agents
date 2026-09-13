@@ -258,6 +258,57 @@ async def test_slack_notify_maps_status_to_reason(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_slack_notify_posts_valid_html_as_multipart(tmp_path: Path) -> None:
+    report = tmp_path / "weekly.html"
+    report.write_text("<html>weekly</html>")
+    tools, seen = _tools(tmp_path, lambda _r: httpx.Response(200, json={"ok": True}))
+
+    await tools.slack_notify(
+        {"channel": "CWRONG123", "text": "Weekly report", "filePath": str(report)}
+    )
+
+    assert seen[0].headers["content-type"].startswith("multipart/form-data")
+    assert b'name="file"; filename="weekly.html"' in seen[0].content
+    assert b"<html>weekly</html>" in seen[0].content
+
+
+@pytest.mark.asyncio
+async def test_slack_notify_rejects_invalid_html_before_request(tmp_path: Path) -> None:
+    report = tmp_path / "weekly.html"
+    report.write_bytes(b"\xff")
+    tools, seen = _tools(tmp_path, lambda _r: httpx.Response(200, json={"ok": True}))
+
+    result = json.loads(
+        _text(
+            await tools.slack_notify(
+                {"channel": "C12345678", "text": "Weekly report", "filePath": str(report)}
+            )
+        )
+    )
+
+    assert result["reason"] == "invalid_input"
+    assert seen == []
+
+
+@pytest.mark.asyncio
+async def test_slack_notify_rejects_non_document_html_before_request(tmp_path: Path) -> None:
+    report = tmp_path / "weekly.html"
+    report.write_text("not an HTML document")
+    tools, seen = _tools(tmp_path, lambda _r: httpx.Response(200, json={"ok": True}))
+
+    result = json.loads(
+        _text(
+            await tools.slack_notify(
+                {"channel": "C12345678", "text": "Weekly report", "filePath": str(report)}
+            )
+        )
+    )
+
+    assert result["reason"] == "invalid_input"
+    assert seen == []
+
+
+@pytest.mark.asyncio
 async def test_upload_media_posts_multipart(tmp_path: Path) -> None:
     shot = tmp_path / "shot.png"
     shot.write_bytes(b"\x89PNG")

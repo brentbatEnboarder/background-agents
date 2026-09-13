@@ -202,6 +202,30 @@ describe("automation read, update, and delete routes", () => {
       );
     });
 
+    it("updates and clears the fixed Slack delivery channel", async () => {
+      mockStore.getById.mockResolvedValue(sampleRow);
+
+      const update = await callRoute("PUT", "/automations/auto-1", {
+        body: { slackDeliveryChannel: "C0C0MEE8F7E" },
+      });
+      expect(update.status).toBe(200);
+      expect(mockStore.bindAutomationUpdate).toHaveBeenLastCalledWith(
+        "auto-1",
+        expect.objectContaining({ slack_delivery_channel: "C0C0MEE8F7E" })
+      );
+
+      vi.clearAllMocks();
+      mockStore.getById.mockResolvedValue(sampleRow);
+      const clear = await callRoute("PUT", "/automations/auto-1", {
+        body: { slackDeliveryChannel: null },
+      });
+      expect(clear.status).toBe(200);
+      expect(mockStore.bindAutomationUpdate).toHaveBeenCalledWith(
+        "auto-1",
+        expect.objectContaining({ slack_delivery_channel: null })
+      );
+    });
+
     it("rejects a replacement pin the automation's harness cannot use", async () => {
       mockProviderAccountStore.getById.mockResolvedValue({
         id: "0123456789abcdef0123456789abcdef",

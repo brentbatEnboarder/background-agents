@@ -317,7 +317,11 @@ export interface McpServerLookup {
  * False (or throwing) means do not install the tool in this sandbox.
  */
 export interface SlackAgentNotifyLookup {
-  isEnabledForRepo(repoOwner: string | null, repoName: string | null): Promise<boolean>;
+  isEnabledForSession(
+    sessionId: string,
+    repoOwner: string | null,
+    repoName: string | null
+  ): Promise<boolean>;
 }
 
 // ==================== Manager ====================
@@ -806,7 +810,8 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
   private async resolveAgentSlackNotifyEnabled(session: SessionRow): Promise<boolean> {
     if (!this.config.slackAgentNotifyLookup) return false;
     try {
-      return await this.config.slackAgentNotifyLookup.isEnabledForRepo(
+      return await this.config.slackAgentNotifyLookup.isEnabledForSession(
+        session.session_name || session.id,
         sessionHasRepository(session) ? session.repo_owner : null,
         sessionHasRepository(session) ? session.repo_name : null
       );

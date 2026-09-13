@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import re
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
 OI_TOOL_SERVER_NAME: Final = "oi"
 TOOL_REQUEST_TIMEOUT_SECONDS: Final = 30.0
 MEDIA_UPLOAD_TIMEOUT_SECONDS: Final = 120.0
+SLACK_HTML_MAX_BYTES: Final = 5 * 1024 * 1024
 # ``POST /pr`` waits synchronously for the sandbox push; the control plane
 # gives that push 360 seconds before it reports a timeout of its own. The tool
 # must outlast the server so a slow push is reported once, by the server.
@@ -585,16 +587,62 @@ class OpenInspectTools:
     # --- slack ------------------------------------------------------------
 
     async def slack_notify(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        file_path = str(args.get("filePath") or "")
+        files = None
+        data = None
+        json_body = None
+        if file_path:
+            path = Path(file_path).expanduser()
+            try:
+                size = path.stat().st_size
+                if not path.is_file() or size == 0 or size > SLACK_HTML_MAX_BYTES:
+                    return _text_result(
+                        _slack_failure(
+                            "invalid_input", "HTML file must be non-empty and at most 5 MiB"
+                        )
+                    )
+                content = path.read_bytes()
+                if path.suffix.lower() != ".html":
+                    return _text_result(
+                        _slack_failure("invalid_input", "Attachment must use the .html extension")
+                    )
+                html = content.decode("utf-8")
+                if "\x00" in html:
+                    return _text_result(
+                        _slack_failure("invalid_input", "HTML file must not contain NUL bytes")
+                    )
+                if not re.match(r"^\s*(?:<!doctype\s+html\b[^>]*>\s*)?<html\b", html, re.I):
+                    return _text_result(
+                        _slack_failure("invalid_input", "Attachment must contain an HTML document")
+                    )
+            except (OSError, UnicodeDecodeError) as error:
+                return _text_result(_slack_failure("invalid_input", str(error)))
+            files = {"file": (path.name, content, "text/html")}
+            data = {
+                "channel": str(args.get("channel") or ""),
+                "text": str(args.get("text") or ""),
+            }
+            if args.get("thread_ts"):
+                data["thread_ts"] = str(args["thread_ts"])
+            if args.get("reason"):
+                data["reason"] = str(args["reason"])
+        else:
+            json_body = {
+                "channel": args.get("channel"),
+                "text": args.get("text"),
+                "thread_ts": args.get("thread_ts"),
+                "reason": args.get("reason"),
+            }
         try:
             response = await self.client.request(
                 "POST",
                 "/slack-notify",
-                json_body={
-                    "channel": args.get("channel"),
-                    "text": args.get("text"),
-                    "thread_ts": args.get("thread_ts"),
-                    "reason": args.get("reason"),
-                },
+                json_body=json_body,
+                files=files,
+                data=data,
+                timeout_seconds=MEDIA_UPLOAD_TIMEOUT_SECONDS
+                if files
+                else TOOL_REQUEST_TIMEOUT_SECONDS,
             )
         except httpx.HTTPError as error:
             return _text_result(_slack_failure("bridge_error", str(error)))
@@ -847,12 +895,12 @@ def build_tools(client: ControlPlaneToolClient) -> list[Any]:
         tools.append(
             tool(
                 "slack-notify",
-                "Post a message to a Slack channel that the user has authorized. Use this only when the "
-                "user has explicitly asked you to notify Slack — this is an externally-visible action that "
-                "other humans will see. The user must tell you which channel; do not guess. The bot must "
-                "already be invited to the channel; if you get channel_not_found_or_forbidden, ask the user "
-                "to invite the bot. Plain text + Slack mrkdwn formatting only. The server attaches the "
-                "attribution footer and View Session button — do not fabricate them.",
+                "Post a message to a Slack channel that the user has authorized. For ordinary sessions, "
+                "use this only when the user explicitly asks you to notify Slack; use the channel they "
+                "specify and do not guess. The bot must already be invited to the channel. Plain text and "
+                "Slack mrkdwn only; the server adds attribution. A destination-bound automation always "
+                "uses its configured channel regardless of the channel argument and may attach one HTML "
+                "file, which is finalized in the top-level message thread.",
                 {
                     "type": "object",
                     "properties": {
@@ -871,6 +919,10 @@ def build_tools(client: ControlPlaneToolClient) -> list[Any]:
                         "reason": {
                             "type": "string",
                             "description": "Optional short note explaining why you are posting. Recorded server-side for audit; not shown in Slack.",
+                        },
+                        "filePath": {
+                            "type": "string",
+                            "description": "Optional absolute path to one non-empty UTF-8 .html file up to 5 MiB.",
                         },
                     },
                     "required": ["channel", "text"],

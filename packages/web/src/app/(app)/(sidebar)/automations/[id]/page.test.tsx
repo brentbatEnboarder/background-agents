@@ -39,6 +39,7 @@ const automation = {
   repositories: [],
   environmentIds: [],
   providerSelections: {},
+  slackDeliveryChannel: "C0C0MEE8F7E",
 };
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
@@ -97,6 +98,13 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("AutomationDetailPage run history", () => {
+  it("shows the fixed Slack delivery channel", async () => {
+    await renderPage();
+
+    expect(await screen.findByText("Slack delivery channel")).toBeInTheDocument();
+    expect(screen.getByText("C0C0MEE8F7E")).toBeInTheDocument();
+  });
+
   it("stops offering more history at the largest page the endpoint serves", async () => {
     history.total = MAX_AUTOMATION_INVOCATION_LIST_LIMIT + 50;
     await renderPage();
