@@ -219,7 +219,7 @@ describe("handleSlackNotify", () => {
     expect(sent.channel).toBe("C0C0MEE8F7E");
   });
 
-  it("posts a top-level summary then finalizes one HTML file in its thread", async () => {
+  it("accepts generic multipart file metadata and finalizes the HTML file", async () => {
     seedActiveSession({ automationId: "auto-1" });
     automationStoreMock.getById.mockResolvedValue({
       id: "auto-1",
@@ -236,7 +236,9 @@ describe("handleSlackNotify", () => {
     const response = await callMultipart({
       channel: "CWRONG123",
       text: "Weekly report",
-      file: new File(["<html>report</html>"], "report.html", { type: "text/html" }),
+      file: new File(["<html>report</html>"], "report.html", {
+        type: "application/octet-stream",
+      }),
     });
 
     expect(response.status).toBe(200);
@@ -312,7 +314,6 @@ describe("handleSlackNotify", () => {
       new File([new Uint8Array(5 * 1024 * 1024 + 1)], "report.html", { type: "text/html" }),
     ],
     ["extension", new File(["report"], "report.txt", { type: "text/html" })],
-    ["mime", new File(["report"], "report.html", { type: "text/plain" })],
     ["document", new File(["report"], "report.html", { type: "text/html" })],
     ["utf8", new File([new Uint8Array([0xff])], "report.html", { type: "text/html" })],
     ["nul", new File(["<html>\0</html>"], "report.html", { type: "text/html" })],

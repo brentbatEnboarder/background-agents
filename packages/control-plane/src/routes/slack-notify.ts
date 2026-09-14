@@ -371,7 +371,6 @@ async function parseMultipartBody(request: Request): Promise<ParsedBody | Respon
   }
   if (
     !attachmentFile.name.toLowerCase().endsWith(".html") ||
-    attachmentFile.type.toLowerCase() !== "text/html" ||
     attachmentFile.size === 0 ||
     attachmentFile.size > SLACK_HTML_MAX_BYTES
   ) {
