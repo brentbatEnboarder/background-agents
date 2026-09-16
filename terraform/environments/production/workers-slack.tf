@@ -64,18 +64,23 @@ module "slack_bot_worker" {
     }
   ]
 
-  plain_text_bindings = [
-    { name = "CONTROL_PLANE_URL", value = local.control_plane_url },
-    { name = "WEB_APP_URL", value = local.web_app_url },
-    { name = "DEPLOYMENT_NAME", value = var.deployment_name },
-    { name = "APP_NAME", value = var.app_name },
-    { name = "DEFAULT_MODEL", value = var.slack_bot_default_model },
-    { name = "CLASSIFICATION_MODEL", value = var.classification_model },
-    { name = "SLACK_APP_ID", value = var.slack_app_id },
-    { name = "SLACK_TEAM_ID", value = var.slack_team_id },
-    { name = "SLACK_ALLOWED_USER_IDS", value = var.slack_allowed_user_ids },
-    { name = "SLACK_ALLOWED_CHANNEL_IDS", value = var.slack_allowed_channel_ids },
-  ]
+  plain_text_bindings = concat(
+    [
+      { name = "CONTROL_PLANE_URL", value = local.control_plane_url },
+      { name = "WEB_APP_URL", value = local.web_app_url },
+      { name = "DEPLOYMENT_NAME", value = var.deployment_name },
+      { name = "APP_NAME", value = var.app_name },
+      { name = "DEFAULT_MODEL", value = var.slack_bot_default_model },
+      { name = "CLASSIFICATION_MODEL", value = var.classification_model },
+      { name = "SLACK_APP_ID", value = var.slack_app_id },
+      { name = "SLACK_TEAM_ID", value = var.slack_team_id },
+      { name = "SLACK_ALLOWED_USER_IDS", value = var.slack_allowed_user_ids },
+      { name = "SLACK_ALLOWED_CHANNEL_IDS", value = var.slack_allowed_channel_ids },
+    ],
+    var.slack_default_environment_id != null ? [
+      { name = "SLACK_DEFAULT_ENVIRONMENT_ID", value = var.slack_default_environment_id },
+    ] : []
+  )
 
   secrets = concat(
     [

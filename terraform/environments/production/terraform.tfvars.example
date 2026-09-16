@@ -210,6 +210,10 @@ slack_allowed_channel_ids = "" # e.g., "C0123456789"
 # menu. Accepts a canonical "provider/model" id or a bare "claude-"/"gpt-" id.
 # slack_bot_default_model = "claude-haiku-4-5"
 
+# Optional saved environment used for every new Slack request. Existing mapped
+# thread continuations remain in their current sessions.
+# slack_default_environment_id = "env_a1b2c3"
+
 # Linear Agent (Optional)
 # Create an OAuth Application at: https://linear.app/settings/api/applications/new
 # - Enable webhooks, select "Agent session events" + "Issues" + "Comments"

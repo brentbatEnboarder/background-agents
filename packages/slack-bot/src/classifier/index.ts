@@ -341,10 +341,37 @@ export class RepoClassifier {
     context?: ThreadContext,
     traceId?: string
   ): Promise<ClassificationResult> {
-    // The target catalog every stage below works over. Environments fail open
-    // to []: an environments-fetch problem degrades the catalog — and with it
-    // classification — to repository-only.
+    // The target catalog every stage below works over. Environments normally
+    // fail open to [], but a configured deployment default must resolve or the
+    // request fails closed instead of silently routing somewhere else.
     const catalog = await loadTargetCatalog(this.env, traceId);
+
+    const defaultEnvironmentId = this.env.SLACK_DEFAULT_ENVIRONMENT_ID;
+    if (defaultEnvironmentId) {
+      const environment = catalog.environments.find(
+        (candidate) => candidate.id === defaultEnvironmentId
+      );
+      if (!environment) {
+        return {
+          target: null,
+          confidence: "low",
+          reasoning:
+            "The configured default environment is not currently available. Please contact an administrator.",
+          needsClarification: true,
+        };
+      }
+
+      log.info("classifier.default_environment_match", {
+        trace_id: traceId,
+        target_id: environment.id,
+      });
+      return {
+        target: { kind: "environment", environment },
+        confidence: "high",
+        reasoning: `Using the configured default environment ${escapeMrkdwnText(environment.name)}.`,
+        needsClarification: false,
+      };
+    }
 
     // Only a fully empty catalog is unclassifiable — environments launch by id
     // without consulting the repo list, so they stay reachable when the repo

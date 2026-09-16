@@ -33,6 +33,7 @@ export interface Env {
   SLACK_TEAM_ID?: string;
   SLACK_ALLOWED_USER_IDS?: string;
   SLACK_ALLOWED_CHANNEL_IDS?: string;
+  SLACK_DEFAULT_ENVIRONMENT_ID?: string;
 
   // Secrets
   SLACK_BOT_TOKEN: string;

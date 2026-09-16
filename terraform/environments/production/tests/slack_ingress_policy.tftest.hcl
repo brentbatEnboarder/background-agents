@@ -68,6 +68,31 @@ run "binds_complete_non_secret_ingress_policy" {
   }
 }
 
+run "omits_an_unconfigured_default_environment" {
+  command = plan
+
+  assert {
+    condition     = !contains(module.slack_bot_worker[0].plain_text_binding_names, "SLACK_DEFAULT_ENVIRONMENT_ID")
+    error_message = "The Slack Worker must omit the optional default environment binding when it is not configured."
+  }
+}
+
+run "binds_a_configured_default_environment" {
+  command = plan
+  variables { slack_default_environment_id = "env_1c1ea5ad50ca4b2b17ed792195cfa8e1" }
+
+  assert {
+    condition     = module.slack_bot_worker[0].plain_text_bindings["SLACK_DEFAULT_ENVIRONMENT_ID"] == "env_1c1ea5ad50ca4b2b17ed792195cfa8e1"
+    error_message = "The Slack Worker must receive the configured default environment ID."
+  }
+}
+
+run "rejects_a_malformed_default_environment_id" {
+  command = plan
+  variables { slack_default_environment_id = "Narration" }
+  expect_failures = [var.slack_default_environment_id]
+}
+
 run "rejects_missing_app_id" {
   command = plan
   variables { slack_app_id = "" }

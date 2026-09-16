@@ -278,6 +278,13 @@ async function handleIncomingMessage(params: IncomingMessageParams): Promise<voi
     traceId
   );
   if (result.needsClarification || !result.target) {
+    if (env.SLACK_DEFAULT_ENVIRONMENT_ID) {
+      await postMessage(env.SLACK_BOT_TOKEN, channel, result.reasoning, {
+        thread_ts: threadTs || ts,
+      });
+      return;
+    }
+
     const catalog = await loadTargetCatalog(env, traceId);
     if (catalog.repos.length === 0 && catalog.environments.length === 0) {
       await postMessage(

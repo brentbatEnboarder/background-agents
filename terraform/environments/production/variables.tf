@@ -325,6 +325,17 @@ variable "slack_bot_default_model" {
   }
 }
 
+variable "slack_default_environment_id" {
+  description = "Optional saved environment ID used for every new Slack session instead of target classification"
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.slack_default_environment_id == null || can(regex("^env_[A-Za-z0-9_-]+$", var.slack_default_environment_id))
+    error_message = "slack_default_environment_id must be null or a valid saved environment ID beginning with env_."
+  }
+}
+
 # =============================================================================
 # Linear Agent Credentials
 # =============================================================================

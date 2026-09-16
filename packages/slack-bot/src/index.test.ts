@@ -831,7 +831,41 @@ describe("POST /events", () => {
     slackFetch.mockRestore();
   });
 
-  it("sets Starting status for follow-up prompts in existing threads", async () => {
+  it("does not offer a chooser when the configured default environment is unavailable", async () => {
+    const slackFetch = mockSlackFetch([]);
+    const env = Object.assign(makeSessionEnv([]), {
+      SLACK_DEFAULT_ENVIRONMENT_ID: "env_missing",
+    });
+    const ctx = makeCtx();
+
+    const response = await app.fetch(
+      slackEventRequest({
+        type: "message",
+        text: "fix the auth tests",
+        user: "U123",
+        channel: "D123",
+        ts: "444.555",
+        channel_type: "im",
+      }),
+      env,
+      ctx
+    );
+
+    expect(response.status).toBe(200);
+    await flushWaitUntil(ctx);
+
+    expect(sessionFetchBodies(env.CONTROL_PLANE.fetch)).toHaveLength(0);
+    expect(slackApiBodies(slackFetch, "chat.postMessage")).toContainEqual({
+      channel: "D123",
+      text: "The configured default environment is not currently available. Please contact an administrator.",
+      thread_ts: "444.555",
+    });
+    expect(slackApiBodies(slackFetch, "chat.postMessage")[0]).not.toHaveProperty("blocks");
+
+    slackFetch.mockRestore();
+  });
+
+  it("keeps follow-up prompts in existing sessions when a default environment is configured", async () => {
     const order: string[] = [];
     const slackFetch = mockSlackFetch(order, {
       threadMessages: [
@@ -843,7 +877,9 @@ describe("POST /events", () => {
         },
       ],
     });
-    const env = makeSessionEnv(order);
+    const env = Object.assign(makeSessionEnv(order), {
+      SLACK_DEFAULT_ENVIRONMENT_ID: "env_default",
+    });
     await (env.SLACK_KV as unknown as { put: (k: string, v: string) => Promise<void> }).put(
       "thread:C123:111.222",
       JSON.stringify({
@@ -881,6 +917,7 @@ describe("POST /events", () => {
     });
     expect(order.indexOf("status")).toBeLessThan(order.indexOf("prompt"));
     expect(order).not.toContain("session");
+    expect(order).not.toContain("repos");
 
     const promptBodies = promptFetchBodies(env.CONTROL_PLANE.fetch);
     expect(promptBodies).toHaveLength(1);

@@ -197,6 +197,56 @@ describe("RepoClassifier", () => {
     expect(result.alternatives).toBeUndefined();
   });
 
+  describe("configured default environment", () => {
+    it("takes precedence over routing rules, channel associations, and the LLM", async () => {
+      const defaultEnvironment = {
+        ...TEST_ENVIRONMENT,
+        channelAssociations: [],
+      };
+      mockGetAvailableEnvironments.mockResolvedValue([defaultEnvironment]);
+      mockGetAvailableRepos.mockResolvedValue([
+        { ...TEST_REPOS[0], channelAssociations: ["C123"] },
+        TEST_REPOS[1],
+      ]);
+      mockGetRoutingRules.mockResolvedValue([{ keyword: "frontend", target: "acme/web" }]);
+
+      const classifier = new RepoClassifier({
+        ...TEST_ENV,
+        SLACK_DEFAULT_ENVIRONMENT_ID: defaultEnvironment.id,
+      });
+      const result = await classifier.classify("frontend issue", { channelId: "C123" });
+
+      expect(result).toEqual({
+        target: { kind: "environment", environment: defaultEnvironment },
+        confidence: "high",
+        reasoning: "Using the configured default environment full-stack.",
+        needsClarification: false,
+      });
+      expect(mockGetRoutingRules).not.toHaveBeenCalled();
+      expect(mockMessagesCreate).not.toHaveBeenCalled();
+    });
+
+    it("fails closed when the configured environment is missing or the catalog is unavailable", async () => {
+      mockGetAvailableEnvironments.mockResolvedValue([]);
+
+      const classifier = new RepoClassifier({
+        ...TEST_ENV,
+        SLACK_DEFAULT_ENVIRONMENT_ID: "env_missing",
+      });
+      const result = await classifier.classify("frontend issue", { channelId: "C123" });
+
+      expect(result).toEqual({
+        target: null,
+        confidence: "low",
+        reasoning:
+          "The configured default environment is not currently available. Please contact an administrator.",
+        needsClarification: true,
+      });
+      expect(mockGetRoutingRules).not.toHaveBeenCalled();
+      expect(mockMessagesCreate).not.toHaveBeenCalled();
+    });
+  });
+
   it("parses null targetId from structured model output", async () => {
     mockMessagesCreate.mockResolvedValue({
       content: [
