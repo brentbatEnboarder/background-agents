@@ -219,7 +219,7 @@ describe("handleSlackNotify", () => {
     expect(sent.channel).toBe("C0C0MEE8F7E");
   });
 
-  it("accepts generic multipart file metadata and finalizes the HTML file", async () => {
+  it("accepts generic multipart metadata and attaches the HTML to the summary", async () => {
     seedActiveSession({ automationId: "auto-1" });
     automationStoreMock.getById.mockResolvedValue({
       id: "auto-1",
@@ -231,6 +231,7 @@ describe("handleSlackNotify", () => {
     });
     fetchMock.mockResolvedValueOnce(new Response("", { status: 200 }));
     mockSlackResponse({ body: { ok: true, files: [{ id: "F1", title: "report.html" }] } });
+    mockSlackResponse({ body: { ok: true } });
     mockSlackResponse({ body: { ok: true, permalink: "https://x.slack.com/p", channel: "C1" } });
 
     const response = await callMultipart({
@@ -242,17 +243,26 @@ describe("handleSlackNotify", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
     const post = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Record<string, unknown>;
     expect(post.channel).toBe("C0C0MEE8F7E");
     expect(post.thread_ts).toBeUndefined();
     expect(String(fetchMock.mock.calls[1][0])).toContain("files.getUploadURLExternal");
     expect(String(fetchMock.mock.calls[2][0])).toBe("https://upload.slack.test/u");
-    const complete = JSON.parse(fetchMock.mock.calls[3][1].body as string) as {
-      channel_id: string;
-      thread_ts: string;
-    };
-    expect(complete).toMatchObject({ channel_id: "C0C0MEE8F7E", thread_ts: "1.2" });
+    const complete = JSON.parse(fetchMock.mock.calls[3][1].body as string) as Record<
+      string,
+      unknown
+    >;
+    expect(complete).toEqual({ files: [{ id: "F1", title: "report.html" }] });
+    const update = JSON.parse(fetchMock.mock.calls[4][1].body as string) as Record<string, unknown>;
+    expect(String(fetchMock.mock.calls[4][0])).toContain("chat.update");
+    expect(update).toMatchObject({
+      channel: "C0C0MEE8F7E",
+      ts: "1.2",
+      text: "Weekly report",
+      file_ids: ["F1"],
+    });
+    expect(Array.isArray(update.blocks)).toBe(true);
   });
 
   it("rejects an attachment from an ordinary session before calling Slack", async () => {
@@ -409,6 +419,30 @@ describe("handleSlackNotify", () => {
 
     expect(response.status).toBe(502);
     expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("reports failure when the finalized file cannot be attached to the summary", async () => {
+    seedActiveSession({ automationId: "auto-1" });
+    automationStoreMock.getById.mockResolvedValue({
+      id: "auto-1",
+      slack_delivery_channel: "C0C0MEE8F7E",
+    });
+    mockSlackResponse({ body: { ok: true, channel: "C0C0MEE8F7E", ts: "1.2" } });
+    mockSlackResponse({
+      body: { ok: true, upload_url: "https://upload.slack.test/u", file_id: "F1" },
+    });
+    fetchMock.mockResolvedValueOnce(new Response("", { status: 200 }));
+    mockSlackResponse({ body: { ok: true, files: [{ id: "F1", title: "report.html" }] } });
+    mockSlackResponse({ body: { ok: false, error: "cant_update_message" } });
+
+    const response = await callMultipart({
+      channel: "C12345678",
+      text: "Weekly report",
+      file: new File(["<html>report</html>"], "report.html", { type: "text/html" }),
+    });
+
+    expect(response.status).toBe(502);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
   it("happy path posts no events to the DO — the agent's tool_call is the source of truth", async () => {
     seedActiveSession();

@@ -16,6 +16,7 @@ import {
   SLACK_DENIAL_STATUS,
   type SlackNotifySuccessOutput,
   type SlackWireDenialReason,
+  updateMessage,
   uploadToExternalUrl,
 } from "@open-inspect/shared/slack";
 import type { SlackGlobalSettings } from "@open-inspect/shared/types/integrations";
@@ -217,8 +218,6 @@ export async function handleSlackNotify(
     }
     const complete = await completeExternalUpload(token, {
       files: [{ id: uploadUrl.file_id, title: parsed.attachment.filename }],
-      channelId,
-      threadTs: messageTs,
       signal: request.signal,
     });
     if (!complete.ok) {
@@ -229,6 +228,16 @@ export async function handleSlackNotify(
     if (!complete.files.some(({ id }) => id === uploadUrl.file_id)) {
       logDenial(sessionId, ctx, effective, audit, "slack_api_error");
       return failureResponse("slack_api_error", "Slack did not confirm the uploaded file.");
+    }
+    const update = await updateMessage(token, channelId, messageTs, sanitized.text, {
+      blocks,
+      fileIds: [uploadUrl.file_id],
+      signal: request.signal,
+    });
+    if (!update.ok) {
+      const reasonCode = mapSlackError(update.error);
+      logDenial(sessionId, ctx, effective, audit, reasonCode, update.retryAfter);
+      return failureResponse(reasonCode, update.error, update.retryAfter);
     }
   }
   const permalinkResp = await getPermalink(token, channelId, messageTs, { signal: request.signal });

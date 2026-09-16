@@ -900,7 +900,7 @@ def build_tools(client: ControlPlaneToolClient) -> list[Any]:
                 "specify and do not guess. The bot must already be invited to the channel. Plain text and "
                 "Slack mrkdwn only; the server adds attribution. A destination-bound automation always "
                 "uses its configured channel regardless of the channel argument and may attach one HTML "
-                "file, which is finalized in the top-level message thread.",
+                "file to the same top-level summary message.",
                 {
                     "type": "object",
                     "properties": {

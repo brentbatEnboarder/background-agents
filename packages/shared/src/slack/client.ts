@@ -61,12 +61,13 @@ export interface ExternalUploadUrlOptions {
   signal?: AbortSignal;
 }
 
-export interface CompleteExternalUploadOptions {
+interface CompleteExternalUploadBaseOptions {
   files: Array<{ id: string; title?: string }>;
-  channelId: string;
-  threadTs: string;
   signal?: AbortSignal;
 }
+
+export type CompleteExternalUploadOptions = CompleteExternalUploadBaseOptions &
+  ({ channelId: string; threadTs: string } | { channelId?: never; threadTs?: never });
 
 export interface SlackRequestOptions {
   signal?: AbortSignal;
@@ -214,8 +215,8 @@ export function completeExternalUpload(
     completeUploadPayloadSchema,
     {
       files: options.files,
-      channel_id: options.channelId,
-      thread_ts: options.threadTs,
+      ...(options.channelId ? { channel_id: options.channelId } : {}),
+      ...(options.threadTs ? { thread_ts: options.threadTs } : {}),
     },
     options.signal
   );
@@ -345,14 +346,21 @@ export function updateMessage(
   channel: string,
   ts: string,
   text: string,
-  options?: { blocks?: unknown[] }
+  options?: { blocks?: unknown[]; fileIds?: string[]; signal?: AbortSignal }
 ): Promise<SlackEnvelope> {
-  return slackPost(token, "chat.update", noPayloadSchema, {
-    channel,
-    ts,
-    text,
-    blocks: options?.blocks,
-  });
+  return slackPost(
+    token,
+    "chat.update",
+    noPayloadSchema,
+    {
+      channel,
+      ts,
+      text,
+      blocks: options?.blocks,
+      file_ids: options?.fileIds,
+    },
+    options?.signal
+  );
 }
 
 export function addReaction(

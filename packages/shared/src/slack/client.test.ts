@@ -136,6 +136,20 @@ describe("external file uploads", () => {
     });
   });
 
+  it("completes an upload privately before it is attached to an existing message", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ ok: true, files: [{ id: "F123" }] }));
+
+    const result = await completeExternalUpload("xoxb-token", {
+      files: [{ id: "F123", title: "Weekly report" }],
+    });
+
+    expect(result.ok).toBe(true);
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
+    expect(body).toEqual({ files: [{ id: "F123", title: "Weekly report" }] });
+  });
+
   it("normalizes finalization network failures instead of rejecting", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new Error("offline"));
 
@@ -406,13 +420,15 @@ describe("updateMessage", () => {
     vi.restoreAllMocks();
   });
 
-  it("posts channel/ts/text (and optional blocks) to chat.update", async () => {
+  it("posts channel/ts/text, blocks, and file IDs to chat.update", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(jsonResponse({ ok: true }));
 
     const result = await updateMessage("xoxb-token", "C123", "1700000000.000100", "edited", {
       blocks: [{ type: "section", text: { type: "mrkdwn", text: "edited" } }],
+      fileIds: ["F123"],
+      signal: AbortSignal.timeout(1_000),
     });
 
     expect(result.ok).toBe(true);
@@ -424,6 +440,8 @@ describe("updateMessage", () => {
     expect(body.ts).toBe("1700000000.000100");
     expect(body.text).toBe("edited");
     expect(Array.isArray(body.blocks)).toBe(true);
+    expect(body.file_ids).toEqual(["F123"]);
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("returns Slack's error envelope on edit failure", async () => {

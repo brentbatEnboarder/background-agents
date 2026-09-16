@@ -69,7 +69,7 @@ async function readErrorBody(response) {
 export default tool({
   name: "slack-notify",
   description:
-    "Post a message to a Slack channel that the user has authorized. For ordinary sessions, use this only when the user explicitly asks you to notify Slack; use the channel they specify and do not guess. The bot must already be invited to the channel. Plain text and Slack mrkdwn only; the server adds attribution. A destination-bound automation always uses its configured channel regardless of the channel argument and may attach one HTML file, which is finalized in the top-level message thread.",
+    "Post a message to a Slack channel that the user has authorized. For ordinary sessions, use this only when the user explicitly asks you to notify Slack; use the channel they specify and do not guess. The bot must already be invited to the channel. Plain text and Slack mrkdwn only; the server adds attribution. A destination-bound automation always uses its configured channel regardless of the channel argument and may attach one HTML file to the same top-level summary message.",
   args: {
     channel: z
       .string()
