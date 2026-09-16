@@ -52,6 +52,7 @@ export interface SessionInternalRouteHandlers {
   tunnelUrls: SessionInternalRouteHandler;
   spawnContext: SessionInternalRouteHandler;
   activePromptAuthor: SessionInternalRouteHandler;
+  activeSlackContext: SessionInternalRouteHandler;
   childSummary: SessionInternalRouteHandler;
   parentPrompt: SessionInternalRouteHandler;
   cancel: SessionInternalRouteHandler;
@@ -141,6 +142,11 @@ export function createSessionInternalRoutes(
       method: "GET",
       path: SessionInternalPaths.activePromptAuthor,
       handler: handlers.activePromptAuthor,
+    },
+    {
+      method: "GET",
+      path: SessionInternalPaths.activeSlackContext,
+      handler: handlers.activeSlackContext,
     },
     { method: "GET", path: SessionInternalPaths.childSummary, handler: handlers.childSummary },
     { method: "POST", path: SessionInternalPaths.parentPrompt, handler: handlers.parentPrompt },

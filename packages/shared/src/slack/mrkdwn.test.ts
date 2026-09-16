@@ -1,13 +1,48 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  allowExactUserMention,
   applyMentionPolicy,
   escapeMrkdwnText,
+  resolveDeliveryMentionPlaceholder,
   sanitizeAgentText,
   sanitizeLinks,
   stripBroadcastMentions,
   truncateForSlack,
 } from "./mrkdwn";
+
+describe("resolveDeliveryMentionPlaceholder", () => {
+  it("resolves every exact placeholder to the configured mention", () => {
+    expect(
+      resolveDeliveryMentionPlaceholder(
+        "{{delivery_mention}} report {{delivery_mention}}",
+        "UANGIE1"
+      )
+    ).toBe("<@UANGIE1> report <@UANGIE1>");
+  });
+
+  it("removes every exact placeholder without a configured recipient", () => {
+    expect(resolveDeliveryMentionPlaceholder("Hi {{delivery_mention}}", null)).toBe("Hi ");
+  });
+
+  it("does not interpret similar non-exact text", () => {
+    expect(resolveDeliveryMentionPlaceholder("{{ delivery_mention }}", "UANGIE1")).toBe(
+      "{{ delivery_mention }}"
+    );
+  });
+});
+
+describe("allowExactUserMention", () => {
+  it("preserves only the exact configured user and canonicalizes its token", () => {
+    expect(allowExactUserMention("<@UANGIE1|Angie> and <@UOTHER1> and <@WANGIE2>", "UANGIE1")).toBe(
+      "<@UANGIE1> and  and "
+    );
+  });
+
+  it("strips every direct user mention when no user is configured", () => {
+    expect(allowExactUserMention("<@UANGIE1> <@WOTHER1>", null)).toBe(" ");
+  });
+});
 
 describe("escapeMrkdwnText", () => {
   it("neutralizes broadcast mentions", () => {
@@ -203,6 +238,17 @@ describe("sanitizeAgentText", () => {
       mentionsPolicy: "strip",
       maxLength: 100,
     });
+    expect(result.strippedBroadcasts).toBe(true);
+    expect(result.mentionsModified).toBe(true);
+  });
+
+  it("keeps only an exact allowed direct mention while stripping broadcasts", () => {
+    const result = sanitizeAgentText("<!channel> <@UANGIE1> <@UOTHER1>", {
+      mentionsPolicy: "allow",
+      allowedMentionUserId: "UANGIE1",
+      maxLength: 100,
+    });
+    expect(result.text).toBe(" <@UANGIE1> ");
     expect(result.strippedBroadcasts).toBe(true);
     expect(result.mentionsModified).toBe(true);
   });

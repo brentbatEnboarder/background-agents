@@ -219,6 +219,32 @@ describe("automation create route", () => {
       );
     });
 
+    it("persists a bounded Slack delivery mention user with a destination", async () => {
+      mockStore.getById.mockResolvedValue(sampleRow);
+
+      const res = await callRoute("POST", "/automations", {
+        body: {
+          ...validBody,
+          slackDeliveryChannel: "C0C0MEE8F7E",
+          slackDeliveryMentionUserId: "U0C0MEE8F7E",
+        },
+      });
+
+      expect(res.status).toBe(201);
+      expect(mockStore.bindAutomationInsert).toHaveBeenCalledWith(
+        expect.objectContaining({ slack_delivery_mention_user_id: "U0C0MEE8F7E" })
+      );
+    });
+
+    it("rejects a Slack delivery mention user without a destination", async () => {
+      const res = await callRoute("POST", "/automations", {
+        body: { ...validBody, slackDeliveryMentionUserId: "U0C0MEE8F7E" },
+      });
+
+      expect(res.status).toBe(400);
+      expect(mockStore.bindAutomationInsert).not.toHaveBeenCalled();
+    });
+
     it("rejects partial create payloads before persistence", async () => {
       const res = await callRoute("POST", "/automations", {
         body: { instructions: "Run tests" },

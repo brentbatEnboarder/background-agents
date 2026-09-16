@@ -87,6 +87,7 @@ export interface AutomationRow {
   trigger_config: string | null; // JSON-serialized TriggerConfig
   trigger_auth_data: string | null;
   slack_delivery_channel?: string | null;
+  slack_delivery_mention_user_id?: string | null;
 }
 
 type AutomationListResult = { automations: AutomationRow[] } & (
@@ -262,6 +263,7 @@ export function toAutomation(
     environmentIds: environmentRows.map((environment) => environment.environment_id),
     providerSelections: toProviderSelections(providerAuthRows),
     slackDeliveryChannel: row.slack_delivery_channel ?? null,
+    slackDeliveryMentionUserId: row.slack_delivery_mention_user_id ?? null,
   };
 }
 
@@ -379,8 +381,9 @@ export class AutomationStore {
          (id, name, instructions,
           trigger_type, schedule_cron, schedule_tz, harness, model, reasoning_effort, enabled, next_run_at,
           consecutive_failures, created_by, user_id, created_at, updated_at, deleted_at,
-           event_type, trigger_config, trigger_auth_data, slack_delivery_channel)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           event_type, trigger_config, trigger_auth_data, slack_delivery_channel,
+           slack_delivery_mention_user_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .bind(
         row.id,
@@ -403,7 +406,8 @@ export class AutomationStore {
         row.event_type,
         row.trigger_config,
         row.trigger_auth_data,
-        row.slack_delivery_channel ?? null
+        row.slack_delivery_channel ?? null,
+        row.slack_delivery_mention_user_id ?? null
       );
   }
 
@@ -560,6 +564,7 @@ export class AutomationStore {
       "trigger_config",
       "trigger_auth_data",
       "slack_delivery_channel",
+      "slack_delivery_mention_user_id",
     ];
 
     for (const field of allowedFields) {

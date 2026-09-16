@@ -228,4 +228,77 @@ describe("POST /sessions/:id/slack-notify", () => {
     });
     expect(capturedChannel).toBe("C01ABC");
   });
+
+  it("attaches interactive HTML to the active authenticated Slack thread", async () => {
+    const { sessionName, sandboxToken, stub } = await setupSession({
+      agentNotificationsEnabled: true,
+      mentionsPolicy: "strip",
+    });
+    const [{ id: authorId }] = await queryDO<{ id: string }>(
+      stub,
+      "SELECT id FROM participants LIMIT 1"
+    );
+    await queryDO(
+      stub,
+      `INSERT INTO messages
+         (id, author_id, content, source, callback_context, status, created_at, started_at)
+       VALUES (?, ?, ?, 'slack', ?, 'processing', ?, ?)`,
+      "message-active",
+      authorId,
+      "Revise the report",
+      JSON.stringify({
+        source: "slack",
+        channel: "C0TRUSTED1",
+        threadTs: "111.222",
+        repoFullName: "acme/web-app",
+        model: "anthropic/claude-sonnet-4-6",
+      }),
+      Date.now(),
+      Date.now()
+    );
+
+    const slackFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("chat.postMessage")) {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        expect(body).toMatchObject({ channel: "C0TRUSTED1", thread_ts: "111.222" });
+        return Response.json({ ok: true, channel: "C0TRUSTED1", ts: "333.444" });
+      }
+      if (url.includes("files.getUploadURLExternal")) {
+        return Response.json({
+          ok: true,
+          upload_url: "https://upload.slack.test/v2",
+          file_id: "F2",
+        });
+      }
+      if (url === "https://upload.slack.test/v2") return new Response("", { status: 200 });
+      if (url.includes("files.completeUploadExternal")) {
+        return Response.json({ ok: true, files: [{ id: "F2", title: "report-v2.html" }] });
+      }
+      if (url.includes("chat.update")) {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        expect(body).toMatchObject({ channel: "C0TRUSTED1", ts: "333.444", file_ids: ["F2"] });
+        return Response.json({ ok: true });
+      }
+      if (url.includes("chat.getPermalink")) {
+        return Response.json({ ok: true, permalink: "https://x.slack.com/p2", channel: "C1" });
+      }
+      throw new Error(`Unmocked fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", slackFetch);
+
+    const form = new FormData();
+    form.set("channel", "C0SPOOFED");
+    form.set("thread_ts", "999.000");
+    form.set("text", "Revised weekly report");
+    form.set("file", new File(["<html>report v2</html>"], "report-v2.html"));
+    const response = await SELF.fetch(`https://test.local/sessions/${sessionName}/slack-notify`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${sandboxToken}` },
+      body: form,
+    });
+
+    expect(response.status).toBe(200);
+    expect(slackFetch).toHaveBeenCalledTimes(6);
+  });
 });

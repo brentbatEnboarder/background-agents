@@ -61,6 +61,7 @@ export async function POST(request: NextRequest) {
       environmentIds: body.environmentIds,
       providerSelections: body.providerSelections,
       slackDeliveryChannel: body.slackDeliveryChannel,
+      slackDeliveryMentionUserId: body.slackDeliveryMentionUserId,
     };
 
     const response = await controlPlaneUserFetch("/automations", {

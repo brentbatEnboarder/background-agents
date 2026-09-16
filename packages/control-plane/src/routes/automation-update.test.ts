@@ -226,6 +226,50 @@ describe("automation read, update, and delete routes", () => {
       );
     });
 
+    it("updates the Slack delivery mention user only with a destination", async () => {
+      mockStore.getById.mockResolvedValue({
+        ...sampleRow,
+        slack_delivery_channel: "C0C0MEE8F7E",
+      });
+
+      const update = await callRoute("PUT", "/automations/auto-1", {
+        body: { slackDeliveryMentionUserId: "U0C0MEE8F7E" },
+      });
+      expect(update.status).toBe(200);
+      expect(mockStore.bindAutomationUpdate).toHaveBeenCalledWith(
+        "auto-1",
+        expect.objectContaining({ slack_delivery_mention_user_id: "U0C0MEE8F7E" })
+      );
+
+      vi.clearAllMocks();
+      mockStore.getById.mockResolvedValue(sampleRow);
+      const rejected = await callRoute("PUT", "/automations/auto-1", {
+        body: { slackDeliveryMentionUserId: "U0C0MEE8F7E" },
+      });
+      expect(rejected.status).toBe(400);
+      expect(mockStore.bindAutomationUpdate).not.toHaveBeenCalled();
+    });
+
+    it("clears the mention authority when clearing its destination", async () => {
+      mockStore.getById.mockResolvedValue({
+        ...sampleRow,
+        slack_delivery_channel: "C0C0MEE8F7E",
+        slack_delivery_mention_user_id: "U0C0MEE8F7E",
+      });
+
+      const clear = await callRoute("PUT", "/automations/auto-1", {
+        body: { slackDeliveryChannel: null },
+      });
+      expect(clear.status).toBe(200);
+      expect(mockStore.bindAutomationUpdate).toHaveBeenCalledWith(
+        "auto-1",
+        expect.objectContaining({
+          slack_delivery_channel: null,
+          slack_delivery_mention_user_id: null,
+        })
+      );
+    });
+
     it("rejects a replacement pin the automation's harness cannot use", async () => {
       mockProviderAccountStore.getById.mockResolvedValue({
         id: "0123456789abcdef0123456789abcdef",

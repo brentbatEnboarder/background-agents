@@ -6,8 +6,12 @@
 
 export type MentionPolicy = "allow" | "escape" | "strip";
 
+export const SLACK_DELIVERY_MENTION_PLACEHOLDER = "{{delivery_mention}}";
+
 export interface SanitizeOptions {
   mentionsPolicy: MentionPolicy;
+  /** When set, preserve only this exact direct user mention and strip all others. */
+  allowedMentionUserId?: string | null;
   maxLength: number;
 }
 
@@ -48,6 +52,22 @@ export function applyMentionPolicy(text: string, policy: MentionPolicy): string 
   return text.replace(USER_MENTION_RE, "");
 }
 
+export function allowExactUserMention(text: string, allowedUserId: string | null): string {
+  return text.replace(USER_MENTION_RE, (_mention, userId: string) =>
+    userId === allowedUserId ? `<@${userId}>` : ""
+  );
+}
+
+export function resolveDeliveryMentionPlaceholder(
+  text: string,
+  configuredUserId: string | null
+): string {
+  return text.replaceAll(
+    SLACK_DELIVERY_MENTION_PLACEHOLDER,
+    configuredUserId ? `<@${configuredUserId}>` : ""
+  );
+}
+
 export function truncateForSlack(
   text: string,
   maxLength: number
@@ -68,7 +88,10 @@ export function sanitizeAgentText(text: string, opts: SanitizeOptions): Sanitize
 
   const afterLinks = sanitizeLinks(afterBroadcasts);
 
-  const afterMentions = applyMentionPolicy(afterLinks, opts.mentionsPolicy);
+  const afterMentions =
+    opts.allowedMentionUserId !== undefined
+      ? allowExactUserMention(afterLinks, opts.allowedMentionUserId)
+      : applyMentionPolicy(afterLinks, opts.mentionsPolicy);
   const mentionsModified = afterMentions !== afterLinks;
 
   const truncated = truncateForSlack(afterMentions, opts.maxLength);

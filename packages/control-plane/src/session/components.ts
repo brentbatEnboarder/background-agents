@@ -813,6 +813,7 @@ export function createSessionRuntime(platform: SessionPlatform, env: Env): Sessi
     tunnelUrls: (_request, _url, requestLog) => sandboxHandler.tunnelUrls(requestLog),
     spawnContext: () => childSessionsHandler.getSpawnContext(),
     activePromptAuthor: () => childSessionsHandler.getActivePromptAuthor(),
+    activeSlackContext: () => childSessionsHandler.getActiveSlackContext(),
     childSummary: (_request, url) => childSummaryHandler.getChildSummary(url),
     parentPrompt: (request) => childSessionsHandler.parentPrompt(request),
     cancel: () => sessionLifecycleHandler.cancel(),

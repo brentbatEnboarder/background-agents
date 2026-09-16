@@ -184,6 +184,7 @@ export default defineConfig({
             SLACK_BOT_TOKEN: "xoxb-test-integration",
             WEB_APP_URL: "https://app.test.local",
             APP_NAME: "Open-Inspect",
+            MARCUS_MEMORY_ENVIRONMENT_ID: "env_marcus",
             TEST_MIGRATIONS: migrations,
           },
         },

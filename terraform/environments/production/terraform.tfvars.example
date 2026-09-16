@@ -313,6 +313,10 @@ web_platform = "vercel"
 # The web app URL will be: https://open-inspect-{deployment_name}.vercel.app
 deployment_name = ""
 
+# Optional env_-prefixed environment allowed to use durable Marcus stakeholder memory.
+# Leave empty to disable the feature.
+marcus_memory_environment_id = ""
+
 # Path to project root (relative to this directory)
 project_root = "../../../"
 

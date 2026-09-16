@@ -276,6 +276,14 @@ export default function AutomationDetailPage({ params }: { params: Promise<{ id:
                   <dd className="text-foreground font-mono">{automation.slackDeliveryChannel}</dd>
                 </div>
               )}
+              {automation.slackDeliveryMentionUserId && (
+                <div>
+                  <dt className="text-muted-foreground">Slack delivery mention user</dt>
+                  <dd className="text-foreground font-mono">
+                    {automation.slackDeliveryMentionUserId}
+                  </dd>
+                </div>
+              )}
               {automation.triggerConfig?.conditions &&
                 automation.triggerConfig.conditions.length > 0 && (
                   <ConditionSummary conditions={automation.triggerConfig.conditions} />

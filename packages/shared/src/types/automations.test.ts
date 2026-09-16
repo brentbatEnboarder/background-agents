@@ -33,6 +33,7 @@ const automation = {
   environmentIds: [],
   providerSelections: {},
   slackDeliveryChannel: null,
+  slackDeliveryMentionUserId: null,
   recentExecutions: [],
 };
 
@@ -206,6 +207,28 @@ describe("automation request boundary contracts", () => {
         slackDeliveryChannel: "#marketing",
       }).success
     ).toBe(false);
+  });
+
+  it("accepts only stable uppercase Slack user IDs for delivery mentions", () => {
+    expect(
+      createAutomationRequestSchema.parse({
+        name: "Delivery",
+        instructions: "Deliver",
+        slackDeliveryMentionUserId: "U0C0MEE8F7E",
+      }).slackDeliveryMentionUserId
+    ).toBe("U0C0MEE8F7E");
+    expect(updateAutomationRequestSchema.parse({ slackDeliveryMentionUserId: null })).toEqual({
+      slackDeliveryMentionUserId: null,
+    });
+    for (const value of ["u0C0MEE8F7E", "C0C0MEE8F7E", "<@U0C0MEE8F7E>", "Angie"]) {
+      expect(
+        createAutomationRequestSchema.safeParse({
+          name: "Delivery",
+          instructions: "Deliver",
+          slackDeliveryMentionUserId: value,
+        }).success
+      ).toBe(false);
+    }
   });
   it.each([createAutomationRequestSchema, updateAutomationRequestSchema])(
     "accepts canonical, unique environment ids",

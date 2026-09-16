@@ -126,6 +126,7 @@ export default function EditAutomationPage({ params }: { params: Promise<{ id: s
               triggerConfig: automation.triggerConfig ?? undefined,
               providerSelections: automation.providerSelections,
               slackDeliveryChannel: automation.slackDeliveryChannel,
+              slackDeliveryMentionUserId: automation.slackDeliveryMentionUserId,
             }}
             onSubmit={handleSubmit}
             submitting={submitting}

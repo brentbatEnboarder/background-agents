@@ -899,8 +899,11 @@ def build_tools(client: ControlPlaneToolClient) -> list[Any]:
                 "use this only when the user explicitly asks you to notify Slack; use the channel they "
                 "specify and do not guess. The bot must already be invited to the channel. Plain text and "
                 "Slack mrkdwn only; the server adds attribution. A destination-bound automation always "
-                "uses its configured channel regardless of the channel argument and may attach one HTML "
-                "file to the same top-level summary message.",
+                "uses its configured channel regardless of the channel argument, may use {{delivery_mention}} "
+                "to mention its configured recipient (never guess a Slack user ID), and may attach one HTML "
+                "file to the same top-level summary message. While processing an interactive Slack-originated "
+                "prompt, a session may attach one revised HTML file to a new reply in the authenticated source "
+                "thread; the server ignores supplied channel and thread coordinates for that attachment.",
                 {
                     "type": "object",
                     "properties": {
@@ -922,7 +925,7 @@ def build_tools(client: ControlPlaneToolClient) -> list[Any]:
                         },
                         "filePath": {
                             "type": "string",
-                            "description": "Optional absolute path to one non-empty UTF-8 .html file up to 5 MiB.",
+                            "description": "Optional absolute path to one non-empty UTF-8 .html file up to 5 MiB. Available to destination-bound automations and while processing an interactive Slack-originated prompt.",
                         },
                     },
                     "required": ["channel", "text"],

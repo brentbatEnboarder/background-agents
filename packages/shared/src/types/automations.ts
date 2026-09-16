@@ -46,6 +46,11 @@ export const automationSlackDeliveryChannelSchema = z
   .string()
   .regex(/^[CG][A-Z0-9]{8,}$/, "must be a Slack channel ID");
 
+/** Exact Slack member that automation-owned delivery may mention. */
+export const automationSlackDeliveryMentionUserIdSchema = z
+  .string()
+  .regex(/^[UW][A-Z0-9]+$/, "must be a Slack user ID");
+
 /**
  * Validate target-count rules shared by automation clients and the API.
  * Repository-scoped triggers bind to exactly one repository and no
@@ -132,6 +137,7 @@ const automationSchema = z.object({
   environmentIds: z.array(z.string()),
   providerSelections: modelProviderSelectionsSchema,
   slackDeliveryChannel: automationSlackDeliveryChannelSchema.nullable().default(null),
+  slackDeliveryMentionUserId: automationSlackDeliveryMentionUserIdSchema.nullable().default(null),
 });
 
 export type Automation = z.infer<typeof automationSchema>;
@@ -195,6 +201,7 @@ export const createAutomationRequestSchema = z.object({
   /** Complete pin set. Omission creates the automation without pins. */
   providerSelections: modelProviderSelectionsSchema.optional(),
   slackDeliveryChannel: automationSlackDeliveryChannelSchema.nullable().optional(),
+  slackDeliveryMentionUserId: automationSlackDeliveryMentionUserIdSchema.nullable().optional(),
 });
 export type CreateAutomationRequest = z.input<typeof createAutomationRequestSchema>;
 
@@ -216,6 +223,8 @@ export const updateAutomationRequestSchema = z.object({
   providerSelections: modelProviderSelectionsSchema.optional(),
   /** Null clears the automation-owned destination. */
   slackDeliveryChannel: automationSlackDeliveryChannelSchema.nullable().optional(),
+  /** Null restores strip-all direct-mention behavior. */
+  slackDeliveryMentionUserId: automationSlackDeliveryMentionUserIdSchema.nullable().optional(),
 });
 export type UpdateAutomationRequest = z.input<typeof updateAutomationRequestSchema>;
 

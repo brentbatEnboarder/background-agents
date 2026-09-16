@@ -1,5 +1,8 @@
 import { getValidHarnessOrDefault } from "@open-inspect/shared/harnesses";
-import { childFollowUpPromptRequestSchema } from "@open-inspect/shared/types/session-api";
+import {
+  childFollowUpPromptRequestSchema,
+  slackCallbackContextSchema,
+} from "@open-inspect/shared/types/session-api";
 import { isSessionPromptable } from "@open-inspect/shared/types/session-activity";
 import { z } from "zod";
 import { sessionStatusSchema } from "@open-inspect/shared/types/sessions";
@@ -120,6 +123,31 @@ export class ChildSessionsHandler {
       this.participantRepository
     );
     return author instanceof Response ? author : Response.json(toActivePromptAuthor(author));
+  }
+
+  getActiveSlackContext(): Response {
+    const processing = this.messageRepository.getProcessingMessage();
+    if (!processing) {
+      return Response.json({ error: "No active prompt" }, { status: 409 });
+    }
+    const message = this.messageRepository.getMessageCallbackContext(processing.id);
+    if (message?.source !== "slack" || !message.callback_context) {
+      return Response.json({ error: "Active prompt is not Slack-originated" }, { status: 403 });
+    }
+    let raw: unknown;
+    try {
+      raw = JSON.parse(message.callback_context);
+    } catch {
+      return Response.json({ error: "Invalid Slack callback context" }, { status: 403 });
+    }
+    const context = slackCallbackContextSchema.safeParse(raw);
+    if (!context.success || !context.data.channel || !context.data.threadTs) {
+      return Response.json({ error: "Invalid Slack callback context" }, { status: 403 });
+    }
+    return Response.json({
+      channel: context.data.channel,
+      threadTs: context.data.threadTs,
+    });
   }
 
   async parentPrompt(request: Request): Promise<Response> {

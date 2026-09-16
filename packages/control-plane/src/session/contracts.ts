@@ -44,6 +44,7 @@ export const SessionInternalPaths = {
   tunnelUrls: "/internal/tunnel-urls",
   spawnContext: "/internal/spawn-context",
   activePromptAuthor: "/internal/active-prompt-author",
+  activeSlackContext: "/internal/active-slack-context",
   childSummary: "/internal/child-summary",
   parentPrompt: "/internal/parent-prompt",
   updateTitle: "/internal/update-title",

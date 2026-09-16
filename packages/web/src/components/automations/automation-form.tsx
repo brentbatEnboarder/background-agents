@@ -56,6 +56,9 @@ export function AutomationForm({ mode, initialValues, onSubmit, submitting }: Au
   const [slackDeliveryChannel, setSlackDeliveryChannel] = useState(
     initialDraft.slackDeliveryChannel
   );
+  const [slackDeliveryMentionUserId, setSlackDeliveryMentionUserId] = useState(
+    initialDraft.slackDeliveryMentionUserId
+  );
   const [trigger, setTrigger] = useState(initialDraft.trigger);
   const repositoryRequired = requiresRepositoryContext(trigger.type);
 
@@ -115,6 +118,7 @@ export function AutomationForm({ mode, initialValues, onSubmit, submitting }: Au
       instructions,
       providerSelections,
       slackDeliveryChannel,
+      slackDeliveryMentionUserId,
       agent,
       trigger,
     },
@@ -165,6 +169,28 @@ export function AutomationForm({ mode, initialValues, onSubmit, submitting }: Au
         />
       </div>
 
+      <div>
+        <label
+          htmlFor="automation-slack-delivery-mention-user"
+          className="block text-sm font-medium text-foreground mb-1.5"
+        >
+          Slack delivery mention user
+        </label>
+        <Input
+          id="automation-slack-delivery-mention-user"
+          type="text"
+          value={slackDeliveryMentionUserId}
+          onChange={(event) => setSlackDeliveryMentionUserId(event.target.value)}
+          placeholder="U0123456789"
+          pattern="[UW][A-Z0-9]+"
+          disabled={!slackDeliveryChannel.trim()}
+        />
+        <FieldDescription className="mt-1.5">
+          Optional exact Slack user ID that automation delivery may mention. All other direct and
+          broadcast mentions are stripped.
+        </FieldDescription>
+      </div>
+
       <AutomationTargetPicker
         targets={targets}
         repos={repos}
@@ -186,7 +212,10 @@ export function AutomationForm({ mode, initialValues, onSubmit, submitting }: Au
           id="automation-slack-delivery-channel"
           type="text"
           value={slackDeliveryChannel}
-          onChange={(event) => setSlackDeliveryChannel(event.target.value)}
+          onChange={(event) => {
+            setSlackDeliveryChannel(event.target.value);
+            if (!event.target.value.trim()) setSlackDeliveryMentionUserId("");
+          }}
           placeholder="C0123456789"
           pattern="[CG][A-Z0-9]{8,}"
         />

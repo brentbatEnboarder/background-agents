@@ -296,7 +296,12 @@ async function handleCreateAutomation(
     trigger_config: body.triggerConfig ? JSON.stringify(body.triggerConfig) : null,
     trigger_auth_data: triggerAuthData,
     slack_delivery_channel: body.slackDeliveryChannel ?? null,
+    slack_delivery_mention_user_id: body.slackDeliveryMentionUserId ?? null,
   };
+
+  if (row.slack_delivery_mention_user_id && !row.slack_delivery_channel) {
+    return error("Slack delivery mention user requires a Slack delivery channel", 400);
+  }
 
   // Persist the automation, its repository selection, and (for slack_event)
   // its watched-channel index in a single atomic write, so none of the three
@@ -506,6 +511,24 @@ async function handleUpdateAutomation(
   }
   if (body.slackDeliveryChannel !== undefined) {
     updateFields.slack_delivery_channel = body.slackDeliveryChannel;
+  }
+  if (body.slackDeliveryMentionUserId !== undefined) {
+    updateFields.slack_delivery_mention_user_id = body.slackDeliveryMentionUserId;
+  }
+  const nextSlackDeliveryChannel =
+    body.slackDeliveryChannel !== undefined
+      ? body.slackDeliveryChannel
+      : existing.slack_delivery_channel;
+  const nextSlackDeliveryMentionUserId =
+    body.slackDeliveryMentionUserId !== undefined
+      ? body.slackDeliveryMentionUserId
+      : existing.slack_delivery_mention_user_id;
+  if (nextSlackDeliveryMentionUserId && !nextSlackDeliveryChannel) {
+    if (body.slackDeliveryChannel === null && body.slackDeliveryMentionUserId === undefined) {
+      updateFields.slack_delivery_mention_user_id = null;
+    } else {
+      return error("Slack delivery mention user requires a Slack delivery channel", 400);
+    }
   }
 
   // Repository-set edits are UNCONDITIONAL — no cardinality freeze and no

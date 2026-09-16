@@ -407,3 +407,10 @@ def test_build_tool_server_registers_the_gated_tools(tmp_path: Path) -> None:
     minimal = names(has_repository=False, slack_notify_enabled=False)
     assert "create-pull-request" not in minimal
     assert "slack-notify" not in minimal
+
+    handlers, _ = _tools(tmp_path, lambda _r: httpx.Response(200), slack_notify_enabled=True)
+    slack_notify = next(
+        tool for tool in build_tools(handlers.client) if tool.name == "slack-notify"
+    )
+    assert "{{delivery_mention}}" in slack_notify.description
+    assert "never guess a Slack user ID" in slack_notify.description

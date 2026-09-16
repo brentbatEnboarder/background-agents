@@ -17,6 +17,7 @@ const UPDATE_FIELDS = [
   "environmentIds",
   "providerSelections",
   "slackDeliveryChannel",
+  "slackDeliveryMentionUserId",
 ] as const;
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {

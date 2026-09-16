@@ -107,12 +107,13 @@ async function callHandler(
 }
 
 async function callMultipart(
-  fields: { channel?: string; text?: string; file?: File },
+  fields: { channel?: string; text?: string; threadTs?: string; file?: File },
   envOverrides?: Partial<Env>
 ): Promise<Response> {
   const form = new FormData();
   if (fields.channel !== undefined) form.set("channel", fields.channel);
   if (fields.text !== undefined) form.set("text", fields.text);
+  if (fields.threadTs !== undefined) form.set("thread_ts", fields.threadTs);
   if (fields.file) form.set("file", fields.file);
   return handleSlackNotify(
     new Request(`https://test.local${PATH}`, { method: "POST", body: form }),
@@ -219,6 +220,86 @@ describe("handleSlackNotify", () => {
     expect(sent.channel).toBe("C0C0MEE8F7E");
   });
 
+  it("preserves only the automation's exact configured user mention", async () => {
+    seedActiveSession({ automationId: "auto-1" });
+    automationStoreMock.getById.mockResolvedValue({
+      id: "auto-1",
+      slack_delivery_channel: "C0C0MEE8F7E",
+      slack_delivery_mention_user_id: "U0ANGIE123",
+    });
+    mockSlackResponse({ body: { ok: true, channel: "C0C0MEE8F7E", ts: "1.2" } });
+    mockSlackResponse({ body: { ok: true, permalink: "https://x.slack.com/p", channel: "C1" } });
+
+    const response = await callHandler(
+      {
+        channel: "CWRONG123",
+        text: "<!channel> {{delivery_mention}} and {{delivery_mention}} <@U0OTHER123>",
+      },
+      undefined,
+      { kind: "sandbox", sessionId: "sess-1" }
+    );
+
+    expect(response.status).toBe(200);
+    const sent = JSON.parse(fetchMock.mock.calls[0][1].body as string) as {
+      blocks: Array<{ type: string; text?: { text: string } }>;
+    };
+    const text = sent.blocks.find(({ type }) => type === "section")?.text?.text;
+    expect(text).toBe(" <@U0ANGIE123> and <@U0ANGIE123> ");
+  });
+
+  it("strips every automation direct mention when no user is configured", async () => {
+    seedActiveSession({ automationId: "auto-1" });
+    automationStoreMock.getById.mockResolvedValue({
+      id: "auto-1",
+      slack_delivery_channel: "C0C0MEE8F7E",
+      slack_delivery_mention_user_id: null,
+    });
+    mockSlackResponse({ body: { ok: true, channel: "C0C0MEE8F7E", ts: "1.2" } });
+    mockSlackResponse({ body: { ok: true, permalink: "https://x.slack.com/p", channel: "C1" } });
+
+    const response = await callHandler(
+      {
+        channel: "CWRONG123",
+        text: "Report for {{delivery_mention}} <!here> <@U0ANGIE123>",
+      },
+      undefined,
+      { kind: "sandbox", sessionId: "sess-1" }
+    );
+
+    expect(response.status).toBe(200);
+    const sent = JSON.parse(fetchMock.mock.calls[0][1].body as string) as {
+      blocks: Array<{ type: string; text?: { text: string } }>;
+    };
+    const text = sent.blocks.find(({ type }) => type === "section")?.text?.text ?? "";
+    expect(text.trim()).toBe("Report for");
+    expect(text).not.toContain("{{delivery_mention}}");
+    expect(text).not.toContain("<!here>");
+    expect(text).not.toContain("<@U0ANGIE123>");
+  });
+
+  it("does not resolve the automation placeholder for an ordinary session", async () => {
+    seedActiveSession();
+    integrationStoreMock.getResolvedConfig.mockResolvedValue({
+      enabledRepos: null,
+      settings: { agentNotificationsEnabled: true, mentionsPolicy: "strip" },
+    });
+    mockSlackResponse({ body: { ok: true, channel: "C1", ts: "1.2" } });
+    mockSlackResponse({ body: { ok: true, permalink: "https://x.slack.com/p", channel: "C1" } });
+
+    const response = await callHandler({
+      channel: "C1",
+      text: "Hi {{delivery_mention}} <@U0OTHER123>",
+    });
+
+    expect(response.status).toBe(200);
+    const sent = JSON.parse(fetchMock.mock.calls[0][1].body as string) as {
+      blocks: Array<{ type: string; text?: { text: string } }>;
+    };
+    expect(sent.blocks.find(({ type }) => type === "section")?.text?.text).toBe(
+      "Hi {{delivery_mention}} "
+    );
+  });
+
   it("accepts generic multipart metadata and attaches the HTML to the summary", async () => {
     seedActiveSession({ automationId: "auto-1" });
     automationStoreMock.getById.mockResolvedValue({
@@ -263,6 +344,54 @@ describe("handleSlackNotify", () => {
       file_ids: ["F1"],
     });
     expect(Array.isArray(update.blocks)).toBe(true);
+  });
+
+  it("binds an interactive HTML attachment to the active Slack source thread", async () => {
+    seedActiveSession();
+    integrationStoreMock.getResolvedConfig.mockResolvedValue({
+      enabledRepos: null,
+      settings: { agentNotificationsEnabled: true, mentionsPolicy: "strip" },
+    });
+    sessionFetchMock.mockResolvedValueOnce(
+      Response.json({ channel: "C0TRUSTED1", threadTs: "111.222" })
+    );
+    mockSlackResponse({ body: { ok: true, channel: "C0TRUSTED1", ts: "333.444" } });
+    mockSlackResponse({
+      body: { ok: true, upload_url: "https://upload.slack.test/u", file_id: "F2" },
+    });
+    fetchMock.mockResolvedValueOnce(new Response("", { status: 200 }));
+    mockSlackResponse({ body: { ok: true, files: [{ id: "F2", title: "report-v2.html" }] } });
+    mockSlackResponse({ body: { ok: true } });
+    mockSlackResponse({ body: { ok: true, permalink: "https://x.slack.com/p2", channel: "C1" } });
+
+    const response = await callMultipart({
+      channel: "C0SPOOFED",
+      threadTs: "999.000",
+      text: "Revised weekly report",
+      file: new File(["<html>report v2</html>"], "report-v2.html", { type: "text/html" }),
+    });
+
+    expect(response.status).toBe(200);
+    const post = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Record<string, unknown>;
+    expect(post.channel).toBe("C0TRUSTED1");
+    expect(post.thread_ts).toBe("111.222");
+    const update = JSON.parse(fetchMock.mock.calls[4][1].body as string) as Record<string, unknown>;
+    expect(update).toMatchObject({ channel: "C0TRUSTED1", ts: "333.444", file_ids: ["F2"] });
+  });
+
+  it("rejects interactive HTML without an active Slack prompt", async () => {
+    seedActiveSession();
+    sessionFetchMock.mockResolvedValueOnce(new Response("No active prompt", { status: 409 }));
+
+    const response = await callMultipart({
+      channel: "C0SPOOFED",
+      threadTs: "999.000",
+      text: "Revised weekly report",
+      file: new File(["<html>report v2</html>"], "report-v2.html", { type: "text/html" }),
+    });
+
+    expect(response.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("rejects an attachment from an ordinary session before calling Slack", async () => {

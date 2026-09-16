@@ -39,6 +39,17 @@ variable "cloudflare_worker_subdomain" {
   type        = string
 }
 
+variable "marcus_memory_environment_id" {
+  description = "Optional environment ID allowed to use durable Marcus stakeholder memory; empty disables the feature"
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.marcus_memory_environment_id == "" || can(regex("^env_[A-Za-z0-9_-]+$", var.marcus_memory_environment_id))
+    error_message = "marcus_memory_environment_id must be empty or an env_-prefixed environment ID."
+  }
+}
+
 variable "vercel_api_token" {
   description = "Vercel API token (required only when web_platform = 'vercel'). Do NOT set to empty string — the Vercel provider validates this on init even when no Vercel resources are created. Leave unset to use the built-in dummy token for Cloudflare-only deployments."
   type        = string

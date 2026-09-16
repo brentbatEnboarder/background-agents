@@ -66,6 +66,8 @@ function createHandler() {
     getProcessingMessageAuthor: vi.fn<() => { author_id: string } | null>(() => ({
       author_id: "participant-1",
     })),
+    getProcessingMessage: vi.fn<() => { id: string } | null>(() => null),
+    getMessageCallbackContext: vi.fn(),
     getParticipantById: vi.fn<(id: string) => ParticipantRow | null>(() => createParticipant()),
   };
   const getSession = vi.fn<() => SessionRow | null>();
@@ -95,6 +97,42 @@ function createHandler() {
 }
 
 describe("ChildSessionsHandler", () => {
+  describe("getActiveSlackContext", () => {
+    it("returns only coordinates from the currently processing Slack prompt", async () => {
+      const { handler, repository } = createHandler();
+      repository.getProcessingMessage.mockReturnValue({ id: "message-1" });
+      repository.getMessageCallbackContext.mockReturnValue({
+        source: "slack",
+        callback_context: JSON.stringify({
+          source: "slack",
+          channel: "C0TRUSTED1",
+          threadTs: "111.222",
+          repoFullName: "acme/repo",
+          model: "anthropic/claude-haiku-4-5",
+        }),
+      });
+
+      const response = handler.getActiveSlackContext();
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        channel: "C0TRUSTED1",
+        threadTs: "111.222",
+      });
+    });
+
+    it("fails closed without an active Slack prompt", async () => {
+      const { handler, repository } = createHandler();
+      expect(handler.getActiveSlackContext().status).toBe(409);
+
+      repository.getProcessingMessage.mockReturnValue({ id: "message-1" });
+      repository.getMessageCallbackContext.mockReturnValue({
+        source: "web",
+        callback_context: null,
+      });
+      expect(handler.getActiveSlackContext().status).toBe(403);
+    });
+  });
+
   describe("parentPrompt", () => {
     function request(body: unknown): Request {
       const withAuthor =

@@ -12,6 +12,7 @@ import { sessionAttachmentRoutes } from "./session-attachments";
 import { sessionWsTokenRoutes } from "./session-ws-token";
 import { sessionDiffRoutes } from "./session-diffs";
 import { sessionSkillRoutes } from "./session-skills";
+import { stakeholderMemoryRoutes } from "./stakeholder-memory";
 
 /** Mount order is precedence order: `/sessions/inbox` must register before `/sessions/:id`. */
 export const sessionRoutes = new Hono<ControlPlaneHonoEnv>();
@@ -26,6 +27,7 @@ for (const module of [
   sessionAttachmentRoutes,
   sessionDiffRoutes,
   sessionSkillRoutes,
+  stakeholderMemoryRoutes,
   sessionChildSpawnRoutes,
   sessionChildRoutes,
 ]) {

@@ -17,6 +17,7 @@
         "packages/sandbox-runtime/src/sandbox_runtime/tools/send-child-prompt.js",
         "packages/sandbox-runtime/src/sandbox_runtime/tools/slack-notify.js",
         "packages/sandbox-runtime/src/sandbox_runtime/tools/spawn-child.js",
+        "packages/sandbox-runtime/src/sandbox_runtime/tools/stakeholder-memory.js",
         "packages/sandbox-runtime/src/sandbox_runtime/ttyd_proxy/server.ts"
       ],
       "project": ["scripts/**/*.ts", "packages/sandbox-runtime/src/sandbox_runtime/**/*.{js,ts}"],

@@ -42,10 +42,13 @@ export {
 export type { ControlPlaneSlackChannelsResponse, SlackChannelListing } from "./channel-contract";
 export {
   applyMentionPolicy,
+  allowExactUserMention,
   escapeMrkdwnText,
+  resolveDeliveryMentionPlaceholder,
   sanitizeAgentText,
   sanitizeLinks,
   stripBroadcastMentions,
+  SLACK_DELIVERY_MENTION_PLACEHOLDER,
   truncateForSlack,
 } from "./mrkdwn";
 export type { MentionPolicy, SanitizeOptions, SanitizeResult } from "./mrkdwn";

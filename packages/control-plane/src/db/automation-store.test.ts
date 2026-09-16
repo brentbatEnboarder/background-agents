@@ -157,6 +157,7 @@ describe("toAutomation", () => {
     expect(automation.userId).toBe("11111111111111111111111111111111");
     expect(automation.environmentIds).toEqual([]);
     expect(automation.slackDeliveryChannel).toBeNull();
+    expect(automation.slackDeliveryMentionUserId).toBeNull();
   });
 
   it("hydrates the fixed Slack delivery channel", () => {
@@ -168,6 +169,17 @@ describe("toAutomation", () => {
     );
 
     expect(automation.slackDeliveryChannel).toBe("C0C0MEE8F7E");
+  });
+
+  it("hydrates the exact Slack delivery mention user", () => {
+    const automation = toAutomation(
+      { ...sampleRow, slack_delivery_mention_user_id: "U0C0MEE8F7E" },
+      [],
+      [],
+      []
+    );
+
+    expect(automation.slackDeliveryMentionUserId).toBe("U0C0MEE8F7E");
   });
 
   it("maps environment rows to environmentIds", () => {

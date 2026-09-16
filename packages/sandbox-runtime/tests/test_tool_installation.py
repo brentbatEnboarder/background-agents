@@ -84,6 +84,7 @@ class TestInstallTools:
         (tools_dir / "spawn-child.js").write_text("// spawn child")
         (tools_dir / "get-child-status.js").write_text("// get status")
         (tools_dir / "cancel-child.js").write_text("// cancel child")
+        (tools_dir / "stakeholder-memory.js").write_text("// stakeholder memory")
 
         with _patch_paths(legacy=tmp_path / "no-legacy", tools=tools_dir):
             sup._install_tools(workdir)
@@ -93,6 +94,7 @@ class TestInstallTools:
         assert (tool_dest / "spawn-child.js").exists()
         assert (tool_dest / "get-child-status.js").exists()
         assert (tool_dest / "cancel-child.js").exists()
+        assert (tool_dest / "stakeholder-memory.js").exists()
         assert (tool_dest / "_bridge-client.js").read_text() == "// bridge client"
 
     def test_non_js_files_skipped(self, tmp_path):

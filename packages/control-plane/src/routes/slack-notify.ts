@@ -11,6 +11,7 @@ import {
   getExternalUploadUrl,
   getPermalink,
   postBlocks,
+  resolveDeliveryMentionPlaceholder,
   sanitizeAgentText,
   splitIntoSlackSections,
   SLACK_DENIAL_STATUS,
@@ -20,11 +21,17 @@ import {
   uploadToExternalUrl,
 } from "@open-inspect/shared/slack";
 import type { SlackGlobalSettings } from "@open-inspect/shared/types/integrations";
-import { automationSlackDeliveryChannelSchema } from "@open-inspect/shared/types/automations";
+import {
+  automationSlackDeliveryChannelSchema,
+  automationSlackDeliveryMentionUserIdSchema,
+} from "@open-inspect/shared/types/automations";
+import { z } from "zod";
 import { IntegrationSettingsStore, resolveSlackSettings } from "../db/integration-settings";
 import { SessionIndexStore } from "../db/session-index";
 import { AutomationStore } from "../db/automation-store";
 import { createLogger } from "../logger";
+import { SessionInternalPaths } from "../session/contracts";
+import { createSessionRuntimeClient } from "../session/runtime-client";
 import type { Env } from "../types";
 import {
   GITHUB_SANDBOX_FALLBACK_ROUTE,
@@ -48,6 +55,10 @@ const CHANNEL_INPUT_MAX_LENGTH = 80;
 const REASON_MAX_LENGTH = 500;
 export const SLACK_HTML_MAX_BYTES = 5 * 1024 * 1024;
 const MULTIPART_OVERHEAD_MAX_BYTES = 64 * 1024;
+const activeSlackContextSchema = z.object({
+  channel: z.string().min(1),
+  threadTs: z.string().min(1),
+});
 
 interface ParsedBody {
   channel: string;
@@ -96,9 +107,10 @@ export async function handleSlackNotify(
   };
 
   let automationChannel: string | null = null;
+  let automationMentionUserId: string | null = null;
   if (session.automationId) {
-    const storedChannel = (await new AutomationStore(ctx.db).getById(session.automationId))
-      ?.slack_delivery_channel;
+    const automation = await new AutomationStore(ctx.db).getById(session.automationId);
+    const storedChannel = automation?.slack_delivery_channel;
     if (storedChannel != null) {
       const channel = automationSlackDeliveryChannelSchema.safeParse(storedChannel);
       if (!channel.success) {
@@ -106,12 +118,15 @@ export async function handleSlackNotify(
       }
       automationChannel = channel.data;
     }
-  }
-  if (parsed.attachment && !automationChannel) {
-    return failureResponse(
-      "feature_disabled",
-      "HTML attachments require an automation with a fixed Slack destination."
-    );
+    if (automation?.slack_delivery_mention_user_id != null) {
+      const mentionUserId = automationSlackDeliveryMentionUserIdSchema.safeParse(
+        automation.slack_delivery_mention_user_id
+      );
+      if (!mentionUserId.success || !automationChannel) {
+        return failureResponse("invalid_input", "Automation Slack mention user is invalid.");
+      }
+      automationMentionUserId = mentionUserId.data;
+    }
   }
   if (automationChannel && ctx.principal?.kind !== "sandbox") {
     return failureResponse(
@@ -119,10 +134,32 @@ export async function handleSlackNotify(
       "Automation-owned Slack delivery is available only to the session sandbox."
     );
   }
+  let interactiveSlackContext: z.infer<typeof activeSlackContextSchema> | null = null;
+  if (parsed.attachment && !automationChannel) {
+    let context: ReturnType<typeof activeSlackContextSchema.safeParse> | null = null;
+    try {
+      const contextResponse = await createSessionRuntimeClient(env, ctx).fetch(
+        sessionId,
+        SessionInternalPaths.activeSlackContext
+      );
+      if (contextResponse.ok) {
+        context = activeSlackContextSchema.safeParse(await contextResponse.json());
+      }
+    } catch {
+      context = null;
+    }
+    if (!context?.success) {
+      return failureResponse(
+        "feature_disabled",
+        "HTML attachments require an active Slack-originated prompt."
+      );
+    }
+    interactiveSlackContext = context.data;
+  }
   const effective = {
     ...parsed,
-    channel: automationChannel ?? parsed.channel,
-    threadTs: parsed.attachment ? undefined : parsed.threadTs,
+    channel: automationChannel ?? interactiveSlackContext?.channel ?? parsed.channel,
+    threadTs: parsed.attachment ? interactiveSlackContext?.threadTs : parsed.threadTs,
     reason: parsed.attachment ? undefined : parsed.reason,
   };
 
@@ -160,8 +197,12 @@ export async function handleSlackNotify(
     }
   }
 
-  const sanitized = sanitizeAgentText(parsed.text, {
+  const messageText = automationChannel
+    ? resolveDeliveryMentionPlaceholder(parsed.text, automationMentionUserId)
+    : parsed.text;
+  const sanitized = sanitizeAgentText(messageText, {
     mentionsPolicy,
+    ...(automationChannel ? { allowedMentionUserId: automationMentionUserId } : {}),
     maxLength: RAW_TEXT_INPUT_MAX_LENGTH,
   });
 
