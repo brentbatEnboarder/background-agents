@@ -46,9 +46,10 @@ describe("dispatchWebServiceRequest", () => {
         redirect: "manual",
         cache: "no-store",
       },
+      timeoutMs: 45_000,
     });
 
-    const [url, init] = mocks.dispatchControlPlaneFetch.mock.calls[0] ?? [];
+    const [url, init, , timeoutMs] = mocks.dispatchControlPlaneFetch.mock.calls[0] ?? [];
     expect(url).toBe("https://control-plane.example/internal/example?mode=test");
     expect(init).toMatchObject({
       method: "POST",
@@ -56,6 +57,7 @@ describe("dispatchWebServiceRequest", () => {
       cache: "no-store",
       body: expect.objectContaining({ byteLength: body.byteLength }),
     });
+    expect(timeoutMs).toBe(45_000);
 
     const sentHeaders = new Headers(init?.headers);
     expect(sentHeaders.get("Authorization")).toBeNull();

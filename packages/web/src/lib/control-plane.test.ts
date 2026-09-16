@@ -112,6 +112,17 @@ describe("controlPlaneUserFetch", () => {
     expect(init?.signal?.reason).toBe("caller disconnected");
   });
 
+  it("uses a caller-selected transport timeout for provider initiation", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+
+    await controlPlaneUserFetch("/image-builds/trigger/environment/env-1", {
+      method: "POST",
+      timeoutMs: 45_000,
+    });
+
+    expect(timeoutSpy).toHaveBeenCalledWith(45_000);
+  });
+
   it("preserves caller redirect and cache policy", async () => {
     await controlPlaneUserFetch("/sessions", {
       redirect: "error",

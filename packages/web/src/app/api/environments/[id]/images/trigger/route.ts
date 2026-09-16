@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { getServerAuthSession } from "@/lib/server-auth-session";
 import { controlPlaneUserFetch } from "@/lib/control-plane";
+import { IMAGE_BUILD_TRIGGER_TIMEOUT_MS } from "@/lib/image-builds";
 import { REPO_IMAGES_UNSUPPORTED_MESSAGE, supportsRepoImages } from "@/lib/sandbox-provider";
 
 export async function POST(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -19,7 +20,7 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
   try {
     const response = await controlPlaneUserFetch(
       `/image-builds/trigger/environment/${encodeURIComponent(id)}`,
-      { method: "POST" }
+      { method: "POST", timeoutMs: IMAGE_BUILD_TRIGGER_TIMEOUT_MS }
     );
     const data = await response.json();
     return NextResponse.json(data, { status: response.status });

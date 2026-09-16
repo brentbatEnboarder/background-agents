@@ -14,6 +14,11 @@ import { getRequestCorrelation } from "@/lib/request-context";
 
 const log = createLogger("control-plane-client");
 
+export interface ControlPlaneUserFetchOptions extends RequestInit {
+  /** Override the transport deadline for a control-plane operation known to initiate provider work. */
+  timeoutMs?: number;
+}
+
 function unauthorizedResponse(correlation: { requestId: string; traceId: string }): Response {
   return Response.json(
     { error: "Unauthorized" },
@@ -35,7 +40,7 @@ function unauthorizedResponse(correlation: { requestId: string; traceId: string 
  */
 export async function controlPlaneUserFetch(
   path: string,
-  options: RequestInit = {}
+  options: ControlPlaneUserFetchOptions = {}
 ): Promise<Response> {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   const correlation = await getRequestCorrelation();
@@ -59,7 +64,7 @@ export async function controlPlaneUserFetch(
     if (!requestHeaders.has("Content-Type")) {
       requestHeaders.set("Content-Type", "application/json");
     }
-    const { method: _method, headers: _headers, body, ...transportOptions } = options;
+    const { method: _method, headers: _headers, body, timeoutMs, ...transportOptions } = options;
 
     return await dispatchWebServiceRequest({
       method,
@@ -69,6 +74,7 @@ export async function controlPlaneUserFetch(
       traceId: correlation.traceId,
       correlationFields,
       transportOptions,
+      timeoutMs,
     });
   } catch (error) {
     log.error("control_plane.fetch_failed", {

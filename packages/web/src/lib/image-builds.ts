@@ -18,6 +18,9 @@ import { z } from "zod";
 /** SWR key for the unified image-build feed. */
 export const IMAGE_BUILDS_KEY = "/api/image-builds";
 
+/** Provider sandbox creation and startup can legitimately exceed the default control-plane deadline. */
+export const IMAGE_BUILD_TRIGGER_TIMEOUT_MS = 45_000;
+
 /** Poll cadence for a build-row feed showing a build still in progress. */
 export const IMAGE_BUILD_POLL_INTERVAL_MS = 30_000;
 

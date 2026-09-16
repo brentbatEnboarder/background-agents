@@ -26,6 +26,7 @@ vi.mock("@/lib/sandbox-provider", async (importOriginal) => ({
 
 import { getServerAuthSession } from "@/lib/server-auth-session";
 import { controlPlaneUserFetch } from "@/lib/control-plane";
+import { IMAGE_BUILD_TRIGGER_TIMEOUT_MS } from "@/lib/image-builds";
 import { REPO_IMAGES_UNSUPPORTED_MESSAGE } from "@/lib/sandbox-provider";
 import { POST as triggerBuild } from "./[id]/images/trigger/route";
 
@@ -70,6 +71,7 @@ describe("POST /api/environments/[id]/images/trigger", () => {
     expect(response.status).toBe(200);
     expect(controlPlaneUserFetch).toHaveBeenCalledWith("/image-builds/trigger/environment/env-1", {
       method: "POST",
+      timeoutMs: IMAGE_BUILD_TRIGGER_TIMEOUT_MS,
     });
   });
 });

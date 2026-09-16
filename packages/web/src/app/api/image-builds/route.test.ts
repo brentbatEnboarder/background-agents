@@ -26,6 +26,7 @@ vi.mock("@/lib/sandbox-provider", async (importOriginal) => ({
 
 import { getServerAuthSession } from "@/lib/server-auth-session";
 import { controlPlaneUserFetch } from "@/lib/control-plane";
+import { IMAGE_BUILD_TRIGGER_TIMEOUT_MS } from "@/lib/image-builds";
 import { REPO_IMAGES_UNSUPPORTED_MESSAGE } from "@/lib/sandbox-provider";
 import { GET as getFeed } from "./route";
 import { POST as triggerBuild } from "./repo/[owner]/[name]/trigger/route";
@@ -253,6 +254,7 @@ describe("proxied control-plane paths", () => {
 
     expect(controlPlaneUserFetch).toHaveBeenCalledWith("/image-builds/trigger/repo/acme/web", {
       method: "POST",
+      timeoutMs: IMAGE_BUILD_TRIGGER_TIMEOUT_MS,
     });
   });
 
@@ -263,7 +265,7 @@ describe("proxied control-plane paths", () => {
 
     expect(controlPlaneUserFetch).toHaveBeenCalledWith(
       "/image-builds/trigger/repo/group%2Fsubgroup/web",
-      { method: "POST" }
+      { method: "POST", timeoutMs: IMAGE_BUILD_TRIGGER_TIMEOUT_MS }
     );
   });
 
