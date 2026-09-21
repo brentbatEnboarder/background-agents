@@ -1,24 +1,18 @@
 import { createKvCacheStore } from "@open-inspect/shared/cache-store";
-import { z } from "zod";
+import {
+  THREAD_SESSION_TTL_SECONDS,
+  threadSessionKey,
+  threadSessionSchema,
+} from "@open-inspect/shared/slack";
 import { createLogger } from "../logger";
 import { targetId, targetLabel, type SlackSessionTarget } from "../targets";
 import type { Env, ThreadSession } from "../types";
 
 const log = createLogger("handler");
-const THREAD_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const threadSessionSchema: z.ZodType<ThreadSession> = z.object({
-  sessionId: z.string().min(1),
-  repoId: z.string().min(1),
-  repoFullName: z.string().min(1),
-  model: z.string().min(1),
-  reasoningEffort: z.string().min(1).optional(),
-  createdAt: z.number().finite().nonnegative(),
-  lastPromptTs: z.string().min(1).optional(),
-});
-
-function getThreadSessionKey(channel: string, threadTs: string): string {
-  return `thread:${channel}:${threadTs}`;
-}
+// Key format, TTL and schema come from `@open-inspect/shared/slack`: the control plane writes this
+// same record when a session posts a top-level message, and a divergence would show up only as a
+// reply being silently ignored.
+const getThreadSessionKey = threadSessionKey;
 
 export async function lookupThreadSession(
   env: Env,
@@ -53,7 +47,7 @@ export async function storeThreadSession(
     await createKvCacheStore(env.SLACK_KV).put(
       getThreadSessionKey(channel, threadTs),
       JSON.stringify(session),
-      { expirationTtl: THREAD_SESSION_TTL_MS / 1000 }
+      { expirationTtl: THREAD_SESSION_TTL_SECONDS }
     );
   } catch (e) {
     log.error("kv.put", {
