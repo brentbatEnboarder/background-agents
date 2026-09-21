@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   allowExactUserMention,
+  convertMarkdownToMrkdwn,
   applyMentionPolicy,
   escapeMrkdwnText,
   resolveDeliveryMentionPlaceholder,
@@ -291,5 +292,71 @@ describe("sanitizeAgentText", () => {
     });
     expect(result.truncated).toBe(true);
     expect(result.text.length).toBeLessThanOrEqual(50);
+  });
+});
+
+describe("convertMarkdownToMrkdwn", () => {
+  it("converts the emphasis Slack cannot render", () => {
+    expect(convertMarkdownToMrkdwn("**476 to 533 sessions**")).toBe("*476 to 533 sessions*");
+    expect(convertMarkdownToMrkdwn("__bold__")).toBe("*bold*");
+    expect(convertMarkdownToMrkdwn("***bold italic***")).toBe("*_bold italic_*");
+    expect(convertMarkdownToMrkdwn("___bold italic___")).toBe("*_bold italic_*");
+  });
+
+  it("reproduces the first autonomous report's failure", () => {
+    // Exactly what arrived in Slack on 2026-09-21 with its asterisks showing.
+    const raw =
+      '**"Landing page (not set)" means GA4 counted a session.** It does not mean a broken page.';
+    expect(convertMarkdownToMrkdwn(raw)).toBe(
+      '*"Landing page (not set)" means GA4 counted a session.* It does not mean a broken page.'
+    );
+  });
+
+  it("leaves already-correct Slack mrkdwn untouched", () => {
+    // The critical case: `*text*` is bold in Slack and italic in Markdown. Rewriting it would
+    // corrupt text an agent formatted correctly, so single asterisks are never touched.
+    expect(convertMarkdownToMrkdwn("*already bold*")).toBe("*already bold*");
+    expect(convertMarkdownToMrkdwn("_already italic_")).toBe("_already italic_");
+    expect(convertMarkdownToMrkdwn("~struck~")).toBe("~struck~");
+  });
+
+  it("is idempotent, so converting twice cannot double-transform", () => {
+    const once = convertMarkdownToMrkdwn("**bold** and ***both***");
+    expect(convertMarkdownToMrkdwn(once)).toBe(once);
+  });
+
+  it("converts headings and unambiguous bullets", () => {
+    expect(convertMarkdownToMrkdwn("## Weekly summary")).toBe("*Weekly summary*");
+    expect(convertMarkdownToMrkdwn("###### Deep heading")).toBe("*Deep heading*");
+    expect(convertMarkdownToMrkdwn("- first\n- second")).toBe("• first\n• second");
+    // `* item` is left alone: a leading `*` opens bold in Slack.
+    expect(convertMarkdownToMrkdwn("* item")).toBe("* item");
+    // Ordered lists already work in Slack.
+    expect(convertMarkdownToMrkdwn("1. step")).toBe("1. step");
+  });
+
+  it("flattens Markdown links without creating a disguised destination", () => {
+    expect(convertMarkdownToMrkdwn("[the report](https://example.com/r)")).toBe(
+      "the report (https://example.com/r)"
+    );
+  });
+
+  it("never rewrites inside code, where asterisks and hashes are content", () => {
+    expect(convertMarkdownToMrkdwn("`a ** b`")).toBe("`a ** b`");
+    expect(convertMarkdownToMrkdwn("```\n## not a heading\n- not a bullet\n```")).toBe(
+      "```\n## not a heading\n- not a bullet\n```"
+    );
+    expect(convertMarkdownToMrkdwn("**real** and `**code**`")).toBe("*real* and `**code**`");
+  });
+
+  it("does not treat bare or unbalanced markers as emphasis", () => {
+    expect(convertMarkdownToMrkdwn("2 ** 3 is exponentiation")).toBe("2 ** 3 is exponentiation");
+    expect(convertMarkdownToMrkdwn("**unclosed")).toBe("**unclosed");
+  });
+
+  it("applies inside sanitizeAgentText before truncation", () => {
+    const result = sanitizeAgentText("**bold**", { mentionsPolicy: "strip", maxLength: 100 });
+    expect(result.text).toBe("*bold*");
+    expect(result.truncated).toBe(false);
   });
 });
