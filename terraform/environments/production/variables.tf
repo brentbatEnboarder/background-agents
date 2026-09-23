@@ -50,6 +50,12 @@ variable "marcus_memory_environment_id" {
   }
 }
 
+variable "enable_control_plane_cron_triggers" {
+  description = "Whether to create the control-plane maintenance and image-build cron triggers"
+  type        = bool
+  default     = true
+}
+
 variable "vercel_api_token" {
   description = "Vercel API token (required only when web_platform = 'vercel'). Do NOT set to empty string — the Vercel provider validates this on init even when no Vercel resources are created. Leave unset to use the built-in dummy token for Cloudflare-only deployments."
   type        = string

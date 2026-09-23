@@ -71,3 +71,9 @@ export type {
   SlackNotifyFailureBody,
   SlackNotifyToolEnvelope,
 } from "./types";
+export {
+  THREAD_SESSION_TTL_SECONDS,
+  threadSessionKey,
+  threadSessionSchema,
+  type ThreadSession,
+} from "./thread-session";

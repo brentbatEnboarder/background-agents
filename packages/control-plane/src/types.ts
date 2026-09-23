@@ -116,6 +116,13 @@ export interface Platform {
   REPOS_CACHE: CacheStore;
   /** Media artifacts: screenshots, uploads, session media. */
   MEDIA_BUCKET: ObjectStorage;
+  /**
+   * The Slack bot's KV namespace, when the Slack bot is deployed. Shared deliberately: a session that
+   * posts a top-level Slack message records the thread-to-session mapping here so a reply in that
+   * thread continues the session that posted, and the Slack bot reads it. Optional, so the control
+   * plane still runs before the binding exists or where Slack is disabled.
+   */
+  SLACK_KV?: CacheStore;
   /** The slack-bot service, when deployed. */
   SLACK_BOT?: FetchClient;
   /** The linear-bot service, when deployed. */

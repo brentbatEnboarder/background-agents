@@ -13,6 +13,9 @@ import {
   postBlocks,
   resolveDeliveryMentionPlaceholder,
   sanitizeAgentText,
+  THREAD_SESSION_TTL_SECONDS,
+  threadSessionKey,
+  type ThreadSession,
   splitIntoSlackSections,
   SLACK_DENIAL_STATUS,
   type SlackNotifySuccessOutput,
@@ -28,6 +31,7 @@ import {
 import { z } from "zod";
 import { IntegrationSettingsStore, resolveSlackSettings } from "../db/integration-settings";
 import { SessionIndexStore } from "../db/session-index";
+import { EnvironmentStore } from "../db/environments";
 import { AutomationStore } from "../db/automation-store";
 import { createLogger } from "../logger";
 import { SessionInternalPaths } from "../session/contracts";
@@ -235,6 +239,44 @@ export async function handleSlackNotify(
 
   const channelId = post.channel;
   const messageTs = post.ts;
+
+  // A top-level post starts a thread, so record which session owns it. Without this a reply to an
+  // automation-delivered report reaches the Slack bot's `handleThreadContinuation`, finds no mapping
+  // and is silently ignored -- exactly what happened to the first autonomous weekly report on
+  // 2026-09-21. Replies into an existing thread are skipped: that thread already has an owner and
+  // must not be reassigned to whichever session happened to post into it.
+  //
+  // Best effort throughout. The message is already delivered by this point, and losing continuity on
+  // one thread must never turn a delivered report into a failed request. It also does nothing when
+  // the `SLACK_KV` binding is absent, so this ships safely ahead of the binding.
+  if (!effective.threadTs && env.SLACK_KV) {
+    try {
+      // The Slack bot shows this label in its completion footer, so prefer the repo, then the
+      // environment's name, and only then its id, which a reader should never be shown.
+      let label = repoScope;
+      if (!label && session.environmentId) {
+        const environment = await new EnvironmentStore(ctx.db).getById(session.environmentId);
+        label = environment?.name ?? session.environmentId;
+      }
+      if (label) {
+        const threadSession: ThreadSession = {
+          sessionId,
+          repoId: repoScope ?? session.environmentId ?? sessionId,
+          repoFullName: label,
+          model: session.model,
+          ...(session.reasoningEffort ? { reasoningEffort: session.reasoningEffort } : {}),
+          createdAt: Date.now(),
+        };
+        await env.SLACK_KV.put(
+          threadSessionKey(channelId, messageTs),
+          JSON.stringify(threadSession),
+          { expirationTtl: THREAD_SESSION_TTL_SECONDS }
+        );
+      }
+    } catch {
+      // Continuity is a convenience; delivery is not.
+    }
+  }
   if (parsed.attachment) {
     const uploadUrl = await getExternalUploadUrl(token, {
       filename: parsed.attachment.filename,

@@ -16,6 +16,8 @@ import { createDurableObjectSessionRuntimeDispatch } from "./session-runtime-dis
 export interface WorkerBindings extends EnvConfig, JobQueueBindings {
   SESSION: DurableObjectNamespace;
   REPOS_CACHE: KVNamespace;
+  /** Present only when the Slack bot is deployed; see Platform.SLACK_KV. */
+  SLACK_KV?: KVNamespace;
   SLACK_BOT?: Fetcher;
   LINEAR_BOT?: Fetcher;
   AUTOFIX_DLQ?: Queue<unknown>;
@@ -34,6 +36,7 @@ export function createCloudflareEnv(bindings: WorkerBindings): Env {
     DB,
     SESSION,
     REPOS_CACHE,
+    SLACK_KV,
     MEDIA_BUCKET,
     SLACK_BOT,
     LINEAR_BOT,
@@ -46,6 +49,7 @@ export function createCloudflareEnv(bindings: WorkerBindings): Env {
     DB,
     SESSION: createDurableObjectSessionRuntimeDispatch(SESSION),
     REPOS_CACHE: createKvCacheStore(REPOS_CACHE),
+    ...(SLACK_KV ? { SLACK_KV: createKvCacheStore(SLACK_KV) } : {}),
     MEDIA_BUCKET: new R2ObjectStorage(MEDIA_BUCKET),
     SLACK_BOT,
     LINEAR_BOT,

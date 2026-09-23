@@ -1056,3 +1056,64 @@ describe("handleSlackNotify", () => {
     expect(sessionFetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe("thread-to-session mapping", () => {
+  function kvSpy() {
+    return { get: vi.fn(), put: vi.fn().mockResolvedValue(undefined), delete: vi.fn() };
+  }
+
+  it("records the mapping when a session starts a thread with a top-level post", async () => {
+    // Without this write, a reply to an automation-delivered report finds no mapping in the Slack
+    // bot and is silently ignored -- the defect the first autonomous weekly report hit.
+    seedActiveSession();
+    mockSlackResponse({ body: { ok: true, channel: "C1", ts: "999.000" } });
+    mockSlackResponse({ body: { ok: true, permalink: "https://slack.example/p" } });
+    const SLACK_KV = kvSpy();
+    const response = await callHandler({ channel: "C1", text: "weekly report" }, {
+      SLACK_KV,
+    } as unknown as Partial<Env>);
+    expect(response.status).toBe(200);
+    expect(SLACK_KV.put).toHaveBeenCalledTimes(1);
+    const [key, value, options] = SLACK_KV.put.mock.calls[0]!;
+    expect(key).toMatch(/^thread:/);
+    expect(options).toEqual({ expirationTtl: 604800 });
+    const stored = JSON.parse(value as string);
+    expect(stored.sessionId).toBe("sess-1");
+    expect(stored.repoFullName).toBe("acme/web-app");
+    expect(stored.model).toBe("anthropic/claude-sonnet-4-6");
+  });
+
+  it("does not reassign a thread someone else already owns", async () => {
+    // Posting into an existing thread must not steal it from the session that started it.
+    seedActiveSession();
+    mockSlackResponse({ body: { ok: true, channel: "C1", ts: "999.000" } });
+    mockSlackResponse({ body: { ok: true, permalink: "https://slack.example/p" } });
+    const SLACK_KV = kvSpy();
+    const response = await callHandler({ channel: "C1", text: "a reply", thread_ts: "111.222" }, {
+      SLACK_KV,
+    } as unknown as Partial<Env>);
+    expect(response.status).toBe(200);
+    expect(SLACK_KV.put).not.toHaveBeenCalled();
+  });
+
+  it("still delivers when the mapping cannot be written", async () => {
+    // The message is already posted by then. Continuity is a convenience; delivery is not.
+    seedActiveSession();
+    mockSlackResponse({ body: { ok: true, channel: "C1", ts: "999.000" } });
+    mockSlackResponse({ body: { ok: true, permalink: "https://slack.example/p" } });
+    const SLACK_KV = kvSpy();
+    SLACK_KV.put.mockRejectedValue(new Error("kv unavailable"));
+    const response = await callHandler({ channel: "C1", text: "weekly report" }, {
+      SLACK_KV,
+    } as unknown as Partial<Env>);
+    expect(response.status).toBe(200);
+  });
+
+  it("does nothing when the binding is absent, so it ships before the binding exists", async () => {
+    seedActiveSession();
+    mockSlackResponse({ body: { ok: true, channel: "C1", ts: "999.000" } });
+    mockSlackResponse({ body: { ok: true, permalink: "https://slack.example/p" } });
+    const response = await callHandler({ channel: "C1", text: "weekly report" });
+    expect(response.status).toBe(200);
+  });
+});

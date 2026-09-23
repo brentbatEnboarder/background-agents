@@ -63,3 +63,22 @@ resource "terraform_data" "sign_in_provider_gate" {
     }
   }
 }
+
+# Warn when durable Marcus stakeholder memory is disabled. The variable defaults
+# to "" and empty means disabled, so a tfvars missing the line turns the feature
+# off silently: no error, no alert, and the only symptom is a 503 from
+# /stakeholder-memory inside an agent session trace.
+#
+# Observed 2026-09-21. The production tfvars carried no marcus_memory_environment_id
+# line, a control-plane deploy wrote the default, and Marcus lost memory for hours
+# before a session trace revealed it.
+#
+# A check block rather than a precondition, because an empty value is a legitimate
+# configuration for a deployment that does not run Marcus. This makes the choice
+# visible instead of accidental.
+check "marcus_memory_configured" {
+  assert {
+    condition     = var.marcus_memory_environment_id != ""
+    error_message = "marcus_memory_environment_id is empty, so durable Marcus stakeholder memory is disabled. Set it to the environment ID allowed to use memory, or accept this warning if this deployment does not run Marcus."
+  }
+}

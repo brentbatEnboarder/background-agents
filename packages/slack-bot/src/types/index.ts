@@ -88,20 +88,5 @@ export type { SlackInteractionPayload } from "../interaction-payload";
 /**
  * Thread-to-session mapping stored in KV for conversation continuity.
  */
-export interface ThreadSession {
-  sessionId: string;
-  /** Session-target id: the repo id ("owner/name") or environment id ("env_…"). */
-  repoId: string;
-  /** Session-target display label: the repo fullName or environment name. */
-  repoFullName: string;
-  model: string;
-  reasoningEffort?: string;
-  /** Unix timestamp of when the session was created. Used for debugging and observability. */
-  createdAt: number;
-  /**
-   * Slack ts of the last thread message forwarded to the session. Follow-up
-   * prompts include the human messages posted after this point so the agent
-   * sees discussion that happened between invocations.
-   */
-  lastPromptTs?: string;
-}
+// Defined in `@open-inspect/shared/slack` because the control plane writes the same record.
+export type { ThreadSession } from "@open-inspect/shared/slack";

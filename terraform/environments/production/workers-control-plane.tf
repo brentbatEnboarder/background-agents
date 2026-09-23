@@ -34,12 +34,25 @@ module "control_plane_worker" {
   worker_subdomain = var.cloudflare_worker_subdomain
   script_path      = local.control_plane_script_path
 
-  kv_namespaces = [
-    {
-      binding_name = "REPOS_CACHE"
-      namespace_id = module.session_index_kv.namespace_id
-    }
-  ]
+  # SLACK_KV is the Slack bot's own namespace, bound here deliberately and read-write by both workers.
+  # When a session posts a top-level Slack message the control plane records the thread-to-session
+  # mapping, and the Slack bot reads it to continue that session when someone replies in the thread.
+  # Without it a reply to an automation-delivered report is silently ignored. Conditional because
+  # module.slack_kv is count-gated on var.enable_slack_bot.
+  kv_namespaces = concat(
+    [
+      {
+        binding_name = "REPOS_CACHE"
+        namespace_id = module.session_index_kv.namespace_id
+      }
+    ],
+    var.enable_slack_bot ? [
+      {
+        binding_name = "SLACK_KV"
+        namespace_id = module.slack_kv[0].namespace_id
+      }
+    ] : []
+  )
 
   d1_databases = [
     {
@@ -235,7 +248,7 @@ module "control_plane_worker" {
 
   # The image-build schedule must match IMAGE_BUILD_SCHEDULER_CRON in scheduler.ts,
   # and the draft sweep ABANDONED_DRAFT_SWEEP_CRON in abandoned-draft-sweep.ts.
-  cron_triggers = ["* * * * *", "7,37 * * * *", "23 * * * *"]
+  cron_triggers = var.enable_control_plane_cron_triggers ? ["* * * * *", "7,37 * * * *", "23 * * * *"] : []
 
   # Base artifacts are verified before the Worker switches its provider references.
   depends_on = [
