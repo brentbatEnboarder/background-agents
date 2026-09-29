@@ -1717,6 +1717,40 @@ describe("POST /events", () => {
 
   it.each([
     [
+      "a direct unsupported file-only DM is rejected before session creation",
+      {
+        subtype: "file_share",
+        files: [
+          {
+            id: "F1",
+            name: "private.docx",
+            mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            url_private: "https://files.slack.com/files-pri/T1-F1/private.docx",
+          },
+        ],
+      },
+      false,
+      1,
+      "Unsupported format",
+    ],
+    [
+      "a direct PDF-only DM with an unavailable download is rejected",
+      {
+        subtype: "file_share",
+        files: [
+          {
+            id: "F1",
+            name: "report.pdf",
+            mimetype: "application/pdf",
+            url_private: "https://files.slack.com/files-pri/T1-F1/report.pdf",
+          },
+        ],
+      },
+      true,
+      2,
+      "didn't start on this request",
+    ],
+    [
       "a direct image-only DM loses every image",
       {
         subtype: "file_share",
@@ -1776,9 +1810,9 @@ describe("POST /events", () => {
             files: [
               {
                 id: "F1",
-                name: "incident.pdf",
-                mimetype: "application/pdf",
-                url_private: "https://files.slack.com/files-pri/T1-F1/incident.pdf",
+                name: "incident.docx",
+                mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                url_private: "https://files.slack.com/files-pri/T1-F1/incident.docx",
                 size: 16,
               },
             ],
@@ -1786,8 +1820,8 @@ describe("POST /events", () => {
         ],
       },
       false,
-      0,
-      "Please include a message with your request",
+      1,
+      "Unsupported format",
     ],
     [
       "an app mention contains a body-less forward with only unsupported files",
@@ -1803,9 +1837,9 @@ describe("POST /events", () => {
             files: [
               {
                 id: "F1",
-                name: "incident.pdf",
-                mimetype: "application/pdf",
-                url_private: "https://files.slack.com/files-pri/T1-F1/incident.pdf",
+                name: "incident.docx",
+                mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                url_private: "https://files.slack.com/files-pri/T1-F1/incident.docx",
                 size: 16,
               },
             ],
@@ -1813,8 +1847,8 @@ describe("POST /events", () => {
         ],
       },
       false,
-      0,
-      "Please include a message with your request",
+      1,
+      "Unsupported format",
     ],
   ] satisfies Array<[string, Record<string, unknown>, boolean, number, string]>)(
     "starts nothing when %s",

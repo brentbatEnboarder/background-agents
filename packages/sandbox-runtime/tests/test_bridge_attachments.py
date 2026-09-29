@@ -24,7 +24,9 @@ def test_prompt_request_body_appends_image_parts_after_text(bridge: AgentBridge)
     body = bridge.harness.prompt_stream._build_prompt_request_body(
         "hello",
         model=None,
-        attachments=[{"name": "a.png", "mimeType": "image/png", "content": "QQ=="}],
+        attachments=[
+            {"name": "a.png", "mimeType": "image/png", "kind": "image", "content": "QQ=="}
+        ],
     )
     assert body["parts"] == [
         {"type": "text", "text": "hello"},
@@ -40,3 +42,27 @@ def test_prompt_request_body_appends_image_parts_after_text(bridge: AgentBridge)
 def test_prompt_request_body_text_only_when_no_attachments(bridge: AgentBridge) -> None:
     body = bridge.harness.prompt_stream._build_prompt_request_body("hi", model=None)
     assert body["parts"] == [{"type": "text", "text": "hi"}]
+
+
+def test_mixed_parts_keep_source_order(bridge: AgentBridge) -> None:
+    import json
+
+    document = {
+        "name": "data.csv",
+        "mimeType": "text/csv",
+        "kind": "document",
+        "content": json.dumps(
+            {
+                "method": "csv.reader",
+                "sourceBytes": 3,
+                "truncated": None,
+                "segments": [{"location": "row 1", "text": '["a"]'}],
+            }
+        ),
+    }
+    image = {"name": "a.png", "mimeType": "image/png", "kind": "image", "content": "QQ=="}
+    body = bridge.harness.prompt_stream._build_prompt_request_body(
+        "inspect", model=None, attachments=[document, image, document]
+    )
+    assert [part["type"] for part in body["parts"]] == ["text", "text", "file", "text"]
+    assert "row 1" in body["parts"][1]["text"]

@@ -828,9 +828,7 @@ class OpenCodePromptStream:
                          to forward as OpenCode file parts.
         """
         parts: list[dict[str, Any]] = [{"type": "text", "text": content}]
-        parts.extend(
-            dict(part) for part in self._attachment_processor.build_file_parts(attachments)
-        )
+        parts.extend(self._attachment_processor.build_parts(attachments))
         request_body: dict[str, Any] = {"parts": parts}
 
         if opencode_message_id:

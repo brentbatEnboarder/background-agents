@@ -3,8 +3,8 @@ import type { CallbackContext } from "@open-inspect/shared/types/session-api";
 import { getAvailableModels } from "../app-home/models";
 import {
   notifyDroppedAttachments,
-  prepareImageAttachments,
-  type SlackImageAttachment,
+  prepareAttachments,
+  type ClassifiedSlackFile,
 } from "../attachments";
 import { getUserRepoBranchPreference } from "../branch-preferences";
 import { formatChannelContext, formatThreadContext } from "../messages/context";
@@ -31,10 +31,10 @@ export interface StartSessionOptions {
   previousMessages?: string[];
   channelName?: string;
   channelDescription?: string;
-  /** Images attached to the triggering Slack message, normalized at ingress. */
-  images?: SlackImageAttachment[];
-  /** True when the triggering message had no user text, only images. */
-  imageOnly?: boolean;
+  /** All files attached to the triggering Slack message, classified at ingress. */
+  files?: ClassifiedSlackFile[];
+  /** True when the triggering message had no user text or forwarded body. */
+  attachmentOnly?: boolean;
   traceId?: string;
 }
 
@@ -52,19 +52,19 @@ export async function startSessionAndSendPrompt(
     previousMessages,
     channelName,
     channelDescription,
-    images,
-    imageOnly,
+    files,
+    attachmentOnly,
     traceId,
   } = options;
-  // Download image bytes before creating the session: an image-only request
-  // whose images are all lost must never create a session it will not prompt.
-  const preparedImages = await prepareImageAttachments(env, images ?? [], traceId);
-  if (imageOnly && preparedImages.files.length === 0) {
+  // Download before session creation: a file-only request with no usable files
+  // must never create a session it will not prompt.
+  const preparedFiles = await prepareAttachments(env, files ?? [], traceId);
+  if (attachmentOnly && preparedFiles.files.length === 0) {
     await notifyDroppedAttachments(
       env,
       channel,
       threadTs,
-      { references: [], dropped: preparedImages.dropped },
+      { references: [], dropped: preparedFiles.dropped },
       { traceId, nothingSent: true }
     );
     return null;
@@ -124,17 +124,17 @@ export async function startSessionAndSendPrompt(
     sessionId: session.sessionId,
     content,
     authorId: `slack:${actor.userId}`,
-    attachments: preparedImages,
-    imageOnly: Boolean(imageOnly),
+    attachments: preparedFiles,
+    attachmentOnly: Boolean(attachmentOnly),
     callbackContext,
     channel,
     threadTs,
     traceId,
   });
   if (!delivery.ok) {
-    // "no_images_delivered" already told the user nothing ran; the other
+    // "no_attachments_delivered" already told the user nothing ran; the other
     // failures deserve an explicit retry hint against the created session.
-    if (delivery.reason !== "no_images_delivered") {
+    if (delivery.reason !== "no_attachments_delivered") {
       await postMessage(
         env.SLACK_BOT_TOKEN,
         channel,

@@ -200,7 +200,7 @@ def submit(call, captured, model, effort, session=None):
     if session is None:
         session = call("/session", {"title": "Reasoning contract"})["id"]
     stream = make_stream()
-    stream._attachment_processor.build_file_parts.return_value = []
+    stream._attachment_processor.build_parts.return_value = []
     body = stream._build_prompt_request_body(
         "Reply only OK. Do not use tools.", model, reasoning_effort=effort
     )

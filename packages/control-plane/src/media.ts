@@ -2,10 +2,13 @@ import type { VideoArtifactMetadata } from "@open-inspect/shared/types/artifacts
 import {
   SESSION_ATTACHMENT_IMAGE_MAX_BYTES,
   SESSION_ATTACHMENT_IMAGE_MIME_TYPES,
+  SESSION_ATTACHMENT_TEXT_MAX_BYTES,
+  SESSION_ATTACHMENT_DOCUMENT_MIME_TYPES,
+  sessionAttachmentKind,
   type SessionAttachmentMimeType,
 } from "@open-inspect/shared/types/session-attachments";
 
-export { SESSION_ATTACHMENT_IMAGE_MAX_BYTES };
+export { SESSION_ATTACHMENT_IMAGE_MAX_BYTES, SESSION_ATTACHMENT_TEXT_MAX_BYTES };
 
 export const SCREENSHOT_MAX_BYTES = 10 * 1024 * 1024;
 export const SCREENSHOT_UPLOAD_LIMIT_PER_SESSION = 100;
@@ -108,9 +111,10 @@ export type SessionAttachmentFileType = {
   extension: string;
 };
 
-const SESSION_ATTACHMENT_MIME_TYPES: ReadonlySet<string> = new Set(
-  SESSION_ATTACHMENT_IMAGE_MIME_TYPES
-);
+const SESSION_ATTACHMENT_MIME_TYPES: ReadonlySet<string> = new Set([
+  ...SESSION_ATTACHMENT_IMAGE_MIME_TYPES,
+  ...SESSION_ATTACHMENT_DOCUMENT_MIME_TYPES,
+]);
 
 export function isSupportedSessionAttachmentMimeType(
   value: string
@@ -125,7 +129,7 @@ export function sessionAttachmentRequestExceedsLimit(request: Request): boolean 
 }
 
 /**
- * Detect user-attached prompt images by magic bytes. This is intentionally
+ * Detect user-attached prompt binary formats by magic bytes. This is intentionally
  * separate from the agent screenshot/recording detectors: session attachments do
  * not support videos in the initial attachment release.
  */
@@ -148,6 +152,45 @@ export function detectSessionAttachmentFileType(
   }
 
   return null;
+}
+
+/** Text has no signature: accept it only with an explicit canonical text declaration. */
+export function validateSessionAttachmentContent(
+  bytes: Uint8Array,
+  declaredMimeType: SessionAttachmentMimeType | null
+): { mimeType: SessionAttachmentMimeType; kind: "image" | "document" } | null {
+  const image = detectSessionAttachmentFileType(bytes);
+  const pdf = hasPrefix(bytes, [0x25, 0x50, 0x44, 0x46, 0x2d]);
+  if (image || pdf) {
+    const mimeType = image?.mimeType ?? "application/pdf";
+    if (declaredMimeType && declaredMimeType !== mimeType) return null;
+    return { mimeType, kind: sessionAttachmentKind(mimeType) };
+  }
+  if (
+    !declaredMimeType ||
+    sessionAttachmentKind(declaredMimeType) !== "document" ||
+    declaredMimeType === "application/pdf"
+  )
+    return null;
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+  if (
+    [...text.replace(/^\ufeff/u, "")].some((character) => {
+      const code = character.codePointAt(0)!;
+      return (
+        (code < 32 && code !== 9 && code !== 10 && code !== 12 && code !== 13) ||
+        (code >= 127 && code <= 159) ||
+        code === 0xfeff
+      );
+    })
+  ) {
+    return null;
+  }
+  return { mimeType: declaredMimeType, kind: "document" };
 }
 
 export function buildSessionAttachmentObjectKey(sessionId: string, attachmentId: string): string {

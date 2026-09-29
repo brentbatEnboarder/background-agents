@@ -10,6 +10,7 @@ import {
   sessionAttachmentRequestExceedsLimit,
   isSupportedScreenshotMimeType,
   isSupportedVideoMimeType,
+  validateSessionAttachmentContent,
   parseDimensions,
   parseOptionalBoolean,
   parseVideoUploadMetadata,
@@ -55,14 +56,24 @@ describe("media helpers", () => {
     );
   });
 
-  it("accepts only image session attachment mime types", () => {
-    for (const mimeType of ["image/png", "image/jpeg", "image/webp", "image/gif"]) {
+  it("accepts only canonical session attachment mime types", () => {
+    for (const mimeType of [
+      "image/png",
+      "image/jpeg",
+      "image/webp",
+      "image/gif",
+      "text/markdown",
+      "text/plain",
+      "text/csv",
+      "text/tab-separated-values",
+      "application/pdf",
+    ]) {
       expect(isSupportedSessionAttachmentMimeType(mimeType)).toBe(true);
     }
     expect(isSupportedSessionAttachmentMimeType("video/mp4")).toBe(false);
     expect(isSupportedSessionAttachmentMimeType("video/quicktime")).toBe(false);
     expect(isSupportedSessionAttachmentMimeType("video/webm")).toBe(false);
-    expect(isSupportedSessionAttachmentMimeType("application/pdf")).toBe(false);
+    expect(isSupportedSessionAttachmentMimeType("application/zip")).toBe(false);
     expect(isSupportedSessionAttachmentMimeType("image/svg+xml")).toBe(false);
   });
 
@@ -114,6 +125,53 @@ describe("media helpers", () => {
   it("rejects unsupported session attachment bytes", () => {
     expect(detectSessionAttachmentFileType(Uint8Array.from([0x25, 0x50, 0x44, 0x46]))).toBeNull();
     expect(detectSessionAttachmentFileType(new Uint8Array(0))).toBeNull();
+  });
+
+  it("admits strict text with one leading BOM and rejects binary-like text", () => {
+    const utf8 = new TextEncoder();
+    for (const mimeType of [
+      "text/plain",
+      "text/markdown",
+      "text/csv",
+      "text/tab-separated-values",
+    ] as const) {
+      expect(validateSessionAttachmentContent(utf8.encode("α\tvalue\r\nnext\f"), mimeType)).toEqual(
+        { mimeType, kind: "document" }
+      );
+    }
+    expect(validateSessionAttachmentContent(utf8.encode("\ufeffhello"), "text/plain")).toEqual({
+      mimeType: "text/plain",
+      kind: "document",
+    });
+    for (const bytes of [
+      utf8.encode("a\0b"),
+      utf8.encode("a\u0001b"),
+      utf8.encode("a\u007fb"),
+      utf8.encode("a\ufeffb"),
+      utf8.encode("\ufeff\ufeffa"),
+      Uint8Array.from([0xc3, 0x28]),
+    ]) {
+      expect(validateSessionAttachmentContent(bytes, "text/plain")).toBeNull();
+    }
+  });
+
+  it("requires PDF and image signatures and rejects conflicting declarations", () => {
+    const pdf = new TextEncoder().encode("%PDF-1.7\n");
+    expect(validateSessionAttachmentContent(pdf, "application/pdf")).toEqual({
+      mimeType: "application/pdf",
+      kind: "document",
+    });
+    expect(validateSessionAttachmentContent(pdf, "text/plain")).toBeNull();
+    expect(
+      validateSessionAttachmentContent(new TextEncoder().encode("%PDF"), "application/pdf")
+    ).toBeNull();
+    expect(
+      validateSessionAttachmentContent(
+        Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        "text/plain"
+      )
+    ).toBeNull();
+    expect(validateSessionAttachmentContent(new TextEncoder().encode("hello"), null)).toBeNull();
   });
 
   it("parses required video metadata", () => {

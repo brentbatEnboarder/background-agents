@@ -5,7 +5,7 @@ import { sendPrompt } from "./control-plane-client";
 import {
   notifyDroppedAttachments,
   uploadPreparedAttachments,
-  type PreparedImageAttachments,
+  type PreparedAttachments,
 } from "../attachments";
 
 vi.mock("../attachments", () => ({
@@ -19,7 +19,7 @@ vi.mock("./control-plane-client", () => ({
 
 const env = { LOG_LEVEL: "error" } as Env;
 
-const emptyPrepared: PreparedImageAttachments = { files: [], dropped: [] };
+const emptyPrepared: PreparedAttachments = { files: [], dropped: [] };
 
 function options(overrides: Partial<Parameters<typeof deliverPrompt>[1]> = {}) {
   return {
@@ -27,7 +27,7 @@ function options(overrides: Partial<Parameters<typeof deliverPrompt>[1]> = {}) {
     content: "Fix it",
     authorId: "slack:U123",
     attachments: emptyPrepared,
-    imageOnly: false,
+    attachmentOnly: false,
     channel: "C123",
     threadTs: "111.222",
     traceId: "trace-1",
@@ -97,9 +97,9 @@ describe("deliverPrompt", () => {
       sessionMissing: false,
     });
 
-    const result = await deliverPrompt(env, options({ imageOnly: true }));
+    const result = await deliverPrompt(env, options({ attachmentOnly: true }));
 
-    expect(result).toEqual({ ok: false, reason: "no_images_delivered" });
+    expect(result).toEqual({ ok: false, reason: "no_attachments_delivered" });
     expect(sendPrompt).not.toHaveBeenCalled();
     expect(notifyDroppedAttachments).toHaveBeenCalledWith(
       env,
@@ -117,7 +117,7 @@ describe("deliverPrompt", () => {
       sessionMissing: true,
     });
 
-    const result = await deliverPrompt(env, options({ imageOnly: true }));
+    const result = await deliverPrompt(env, options({ attachmentOnly: true }));
 
     expect(result).toEqual({ ok: false, reason: "stale" });
     expect(sendPrompt).not.toHaveBeenCalled();
@@ -131,7 +131,7 @@ describe("deliverPrompt", () => {
       sessionMissing: false,
     });
 
-    const result = await deliverPrompt(env, options({ imageOnly: false }));
+    const result = await deliverPrompt(env, options({ attachmentOnly: false }));
 
     expect(result.ok).toBe(true);
     expect(sendPrompt).toHaveBeenCalled();

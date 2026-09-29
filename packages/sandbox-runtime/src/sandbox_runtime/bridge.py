@@ -30,7 +30,7 @@ from websockets.exceptions import InvalidStatus
 
 from .attachment_processor import (
     AttachmentProcessor,
-    parse_session_image_attachments,
+    parse_session_attachments,
 )
 from .constants import (
     BOOT_WARNINGS_FILE_PATH,
@@ -677,9 +677,7 @@ class AgentBridge:
 
             await self._ensure_agent_session()
 
-            session_attachments, rejected_attachments = parse_session_image_attachments(
-                raw_attachments
-            )
+            session_attachments, rejected_attachments = parse_session_attachments(raw_attachments)
             if rejected_attachments:
                 self.log.warn(
                     "prompt.invalid_attachments",

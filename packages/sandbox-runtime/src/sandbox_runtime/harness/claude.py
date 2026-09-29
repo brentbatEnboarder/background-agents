@@ -608,6 +608,11 @@ class ClaudeHarness:
     async def _user_messages(self, prompt: HarnessPrompt) -> AsyncIterator[dict[str, Any]]:
         content: list[dict[str, Any]] = [{"type": "text", "text": prompt.text}]
         for attachment in prompt.attachments:
+            if attachment["kind"] == "document":
+                from ..attachment_processor import AttachmentProcessor
+
+                content.extend(AttachmentProcessor.build_parts([attachment]))
+                continue
             content.append(
                 {
                     "type": "image",

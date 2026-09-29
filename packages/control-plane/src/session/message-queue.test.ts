@@ -948,7 +948,7 @@ describe("SessionMessageQueue", () => {
     expect(h.repository.createMessageWithAttachments).toHaveBeenCalledWith(
       expect.objectContaining({
         attachments: JSON.stringify([
-          { name: "shot.png", attachmentId: "up-1", mimeType: "image/png" },
+          { name: "shot.png", attachmentId: "up-1", mimeType: "image/png", kind: "image" },
         ]),
       }),
       ["up-1"]
@@ -1035,12 +1035,12 @@ describe("SessionMessageQueue", () => {
     );
   });
 
-  it("rejects attachment rows with unsupported image metadata", async () => {
+  it("rejects attachment rows with unsupported metadata", async () => {
     const h = buildQueue();
     h.attachmentRepository.getUnreferenced.mockReturnValue([
       {
         id: "up-invalid",
-        mime_type: "application/pdf",
+        mime_type: "application/zip",
         size_bytes: 100,
         object_key: "sessions/sess-1/attachments/up-invalid",
         message_id: null,
@@ -1059,7 +1059,7 @@ describe("SessionMessageQueue", () => {
       expect.anything(),
       expect.objectContaining({
         code: "INVALID_ATTACHMENTS",
-        message: "Attachment is not a supported image",
+        message: "Attachment is not a supported format",
       })
     );
   });

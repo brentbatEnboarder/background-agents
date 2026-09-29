@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   SESSION_ATTACHMENT_LIMIT_PER_SESSION,
   SESSION_ATTACHMENT_IMAGE_MAX_BYTES,
+  SESSION_ATTACHMENT_TEXT_MAX_BYTES,
   SESSION_ATTACHMENT_TOTAL_BYTES_PER_SESSION,
   SESSION_ATTACHMENT_UNREFERENCED_TTL_MS,
   SESSION_ATTACHMENT_CLEANUP_CLAIM_TTL_MS,
@@ -67,6 +68,11 @@ describe("AttachmentsHandler", () => {
     ["non-positive size", { ...VALID_BODY, sizeBytes: 0 }],
     ["non-integer size", { ...VALID_BODY, sizeBytes: 1.5 }],
     ["oversized upload", { ...VALID_BODY, sizeBytes: SESSION_ATTACHMENT_IMAGE_MAX_BYTES + 1 }],
+    [
+      "oversized text",
+      { ...VALID_BODY, mimeType: "text/plain", sizeBytes: SESSION_ATTACHMENT_TEXT_MAX_BYTES + 1 },
+    ],
+    ["caller-supplied kind", { ...VALID_BODY, kind: "document" }],
     [
       "caller-supplied objectKey",
       { ...VALID_BODY, objectKey: "sessions/another-session/attachments/up-1" },
@@ -154,6 +160,26 @@ describe("AttachmentsHandler", () => {
       createdAt: NOW,
     });
     expect(await response.json()).toEqual({ status: "ok" });
+  });
+
+  it("records document bytes within the quota without a filename or new kind column", async () => {
+    const { handler, repository, sessionId } = buildHandler();
+    const response = await handler.recordAttachment(
+      uploadRequest({
+        ...VALID_BODY,
+        mimeType: "application/pdf",
+        sizeBytes: SESSION_ATTACHMENT_IMAGE_MAX_BYTES,
+      }),
+      sessionId
+    );
+    expect(response.status).toBe(200);
+    expect(repository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mimeType: "application/pdf",
+        sizeBytes: SESSION_ATTACHMENT_IMAGE_MAX_BYTES,
+      })
+    );
+    expect(repository.create.mock.calls[0]?.[0]).not.toHaveProperty("kind");
   });
 
   it("acknowledges successful cleanup and releases failed claims", async () => {

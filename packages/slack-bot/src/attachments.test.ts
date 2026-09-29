@@ -3,11 +3,11 @@ import type { SlackMessageFile } from "@open-inspect/shared/slack";
 import { sha256Hex, verifyServiceSignature } from "@open-inspect/shared/service-auth";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  classifySlackFiles,
   notifyDroppedAttachments,
-  prepareImageAttachments,
-  toImageAttachments,
+  prepareAttachments,
+  type SlackAttachment,
   uploadPreparedAttachments,
-  type SlackImageAttachment,
 } from "./attachments";
 import type { Env } from "./types";
 
@@ -37,13 +37,26 @@ const pngFile: SlackMessageFile = {
   size: 1024,
 };
 
-const pngAttachment: SlackImageAttachment = {
+const pngAttachment: SlackAttachment = {
   id: "F1",
   name: "screenshot.png",
   mimetype: "image/png",
   size: 1024,
   downloadUrl: "https://files.slack.com/files-pri/T1-F1/screenshot.png",
 };
+
+function toImageAttachments(files: SlackMessageFile[] | undefined): SlackAttachment[] {
+  return classifySlackFiles(files).flatMap((entry) =>
+    entry.attachment?.mimetype.startsWith("image/") ? [entry.attachment] : []
+  );
+}
+
+function prepareImageAttachments(env: Env, attachments: SlackAttachment[]) {
+  return prepareAttachments(
+    env,
+    attachments.map((attachment) => ({ attachment }))
+  );
+}
 
 function imageBytesResponse(size = 16): Response {
   return new Response(new Uint8Array(size).fill(1), { status: 200 });
@@ -102,6 +115,103 @@ describe("toImageAttachments", () => {
     ]);
     expect(attachment!.downloadUrl).toBe("https://files.slack.com/download/F1");
     expect(attachment!.size).toBe(1024);
+  });
+});
+
+describe("classifySlackFiles", () => {
+  it("retains supported, unsupported and invalid files in source order", () => {
+    const result = classifySlackFiles([
+      { ...pngFile, name: "notes.md", mimetype: "text/plain" },
+      { ...pngFile, mimetype: "application/x-msdownload", name: "evil.md" },
+      { ...pngFile, name: "table.csv", mimetype: "text/plain" },
+      { ...pngFile, name: "table.tsv", mimetype: "text/plain" },
+      { ...pngFile, name: "report.pdf", mimetype: "application/pdf" },
+      { ...pngFile, name: "bad.pdf", mimetype: "application/pdf", mode: "external" },
+      { ...pngFile, name: "photo.png", mimetype: "image/png" },
+    ]);
+    expect(result.map((entry) => entry.attachment?.mimetype ?? entry.dropReason)).toEqual([
+      "text/markdown",
+      "unsupported_format",
+      "text/csv",
+      "text/tab-separated-values",
+      "application/pdf",
+      "untrusted_url",
+      "image/png",
+    ]);
+  });
+
+  it("rejects unsupported declarations even when a filename has an approved extension", () => {
+    expect(
+      classifySlackFiles([
+        { ...pngFile, name: "report.pdf", mimetype: "application/octet-stream" },
+        { ...pngFile, name: "table.csv", mimetype: "application/vnd.ms-excel" },
+        { ...pngFile, name: "notes.md", mimetype: "text/html" },
+        { ...pngFile, name: "notes.md", mimetype: "text/plain; charset=utf-8" },
+      ])
+    ).toEqual(Array.from({ length: 4 }, () => ({ dropReason: "unsupported_format" })));
+  });
+
+  it("does not send the token to hostile hosts, credentials in URLs or redirects", async () => {
+    const hostile = classifySlackFiles([
+      { ...pngFile, mimetype: "text/plain", url_private: "https://slack.com@evil.test/file" },
+      { ...pngFile, mimetype: "text/plain", url_private: "https://user:pass@files.slack.com/f" },
+      { ...pngFile, mimetype: "text/plain", url_private: "https://files.slack.com:8080/f" },
+    ]);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    expect((await prepareAttachments(makeEnv(), hostile)).dropped).toEqual([
+      "untrusted_url",
+      "untrusted_url",
+      "untrusted_url",
+    ]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("bounds and strips control characters from display names without logging them", () => {
+    const [entry] = classifySlackFiles([
+      { ...pngFile, name: `../private\u0000\n${"x".repeat(300)}.md`, mimetype: "text/plain" },
+    ]);
+    expect(entry?.attachment?.name).not.toContain("\n");
+    expect(entry?.attachment?.name).not.toContain("\u0000");
+    expect(entry?.attachment?.name.length).toBe(255);
+    expect(entry?.attachment?.mimetype).toBe("text/markdown");
+  });
+
+  it("caps all files including unsupported entries and keeps successful downloads ordered", async () => {
+    const files = classifySlackFiles([
+      { ...pngFile, mimetype: "application/x-unknown" },
+      { ...pngFile, name: "a.txt", mimetype: "text/plain" },
+      { ...pngFile, name: "too-big.txt", mimetype: "text/plain", size: 2 * 1024 * 1024 + 1 },
+      { ...pngFile, name: "b.pdf", mimetype: "application/pdf" },
+      { ...pngFile, mimetype: "image/png" },
+      { ...pngFile, mimetype: "text/markdown" },
+      { ...pngFile, mimetype: "text/plain" },
+    ]);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("ok"));
+    const result = await prepareAttachments(makeEnv(), files);
+    expect(result.files.map((file) => file.attachment.name)).toEqual([
+      "a.txt",
+      "b.pdf",
+      "screenshot.png",
+      "screenshot.png",
+    ]);
+    expect(result.dropped).toEqual(["unsupported_format", "too_large", "over_cap"]);
+  });
+
+  it("rejects empty and oversized streamed text without affecting PDFs", async () => {
+    const files = classifySlackFiles([
+      { ...pngFile, mimetype: "text/plain" },
+      { ...pngFile, mimetype: "application/pdf" },
+    ]);
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(null))
+      .mockResolvedValueOnce(
+        new Response("%PDF-test", {
+          headers: { "Content-Length": String(2 * 1024 * 1024 + 1) },
+        })
+      );
+    const result = await prepareAttachments(makeEnv(), files);
+    expect(result.dropped).toEqual(["empty"]);
+    expect(result.files[0]?.attachment.mimetype).toBe("application/pdf");
   });
 });
 
@@ -294,6 +404,13 @@ describe("uploadPreparedAttachments", () => {
     expect(result.sessionMissing).toBe(false);
   });
 
+  it("maps a control-plane content rejection to an actionable warning reason", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(imageBytesResponse());
+    const env = makeEnv(vi.fn().mockResolvedValueOnce(new Response(null, { status: 400 })));
+    const result = await prepareAndUpload(env, "sess-1", [pngFile]);
+    expect(result.dropped).toEqual(["invalid_content"]);
+  });
+
   it("counts malformed upload responses as dropped", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(imageBytesResponse());
     const controlPlaneFetch = vi
@@ -382,7 +499,7 @@ describe("notifyDroppedAttachments", () => {
     const body = JSON.parse(init!.body as string);
     expect(body.channel).toBe("C1");
     expect(body.thread_ts).toBe("1.0");
-    expect(body.text).toContain("2 attached images");
+    expect(body.text).toContain("2 attached files");
     expect(body.text).toContain("files:read");
   });
 
@@ -399,7 +516,7 @@ describe("notifyDroppedAttachments", () => {
     const body = JSON.parse(fetchSpy.mock.calls[0]![1]!.body as string);
     expect(body.text).not.toContain("files:read");
     expect(body.text).toContain("10 MB or smaller");
-    expect(body.text).toContain("at most 6 images");
+    expect(body.text).toContain("at most 6 files");
   });
 
   it("says no run started when notified with nothingSent", async () => {
@@ -417,5 +534,23 @@ describe("notifyDroppedAttachments", () => {
 
     const body = JSON.parse(fetchSpy.mock.calls[0]![1]!.body as string);
     expect(body.text).toContain("didn't start on this request");
+    expect(body.text).toContain("Accepted formats");
+  });
+
+  it("groups distinct reasons in one Slack warning without including filenames", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    await notifyDroppedAttachments(makeEnv(), "C1", "1.0", {
+      references: [{ attachmentId: "att-1", name: "private-name.pdf" }],
+      dropped: ["unsupported_format", "invalid_content", "untrusted_url", "unsupported_format"],
+    });
+    const body = JSON.parse(fetchSpy.mock.calls[0]![1]!.body as string);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(body.text).toContain("4 attached files");
+    expect(body.text).toContain("Unsupported format");
+    expect(body.text).toContain("invalid text or PDF");
+    expect(body.text).toContain("Untrusted or unavailable");
+    expect(body.text).not.toContain("private-name.pdf");
   });
 });

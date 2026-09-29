@@ -11,18 +11,14 @@ import { getSlackSettings } from "../slack-settings";
 import { deliverPrompt } from "./prompt-delivery";
 import { buildThreadSession, storeThreadSession } from "./thread-session-store";
 import { postMessage } from "@open-inspect/shared/slack";
-import {
-  notifyDroppedAttachments,
-  prepareImageAttachments,
-  type SlackImageAttachment,
-} from "../attachments";
+import { notifyDroppedAttachments, prepareAttachments, type SlackAttachment } from "../attachments";
 
 vi.mock("@open-inspect/shared/slack", () => ({
   postMessage: vi.fn(),
 }));
 
 vi.mock("../attachments", () => ({
-  prepareImageAttachments: vi.fn(async () => ({ files: [], dropped: [] })),
+  prepareAttachments: vi.fn(async () => ({ files: [], dropped: [] })),
   notifyDroppedAttachments: vi.fn(async () => {}),
 }));
 
@@ -122,7 +118,7 @@ describe("startSessionAndSendPrompt", () => {
     });
     vi.mocked(getUserRepoBranchPreference).mockResolvedValue("repo-override-branch");
     vi.mocked(createSession).mockResolvedValue({ sessionId: "session-1", status: "created" });
-    vi.mocked(prepareImageAttachments).mockResolvedValue({ files: [], dropped: [] });
+    vi.mocked(prepareAttachments).mockResolvedValue({ files: [], dropped: [] });
     vi.mocked(deliverPrompt).mockResolvedValue({ ok: true, data: { messageId: "message-1" } });
     vi.mocked(buildThreadSession).mockReturnValue({
       sessionId: "session-1",
@@ -175,7 +171,7 @@ describe("startSessionAndSendPrompt", () => {
         "Fix the failing deploy",
       authorId: "slack:U123",
       attachments: { files: [], dropped: [] },
-      imageOnly: false,
+      attachmentOnly: false,
       callbackContext: {
         source: "slack",
         channel: "C123",
@@ -304,7 +300,7 @@ describe("startSessionAndSendPrompt", () => {
   });
 
   it("downloads message images before session creation and hands them to delivery", async () => {
-    const images: SlackImageAttachment[] = [
+    const images: SlackAttachment[] = [
       {
         id: "F1",
         name: "screenshot.png",
@@ -316,7 +312,7 @@ describe("startSessionAndSendPrompt", () => {
       files: [{ attachment: images[0]!, bytes: new Uint8Array(4) }],
       dropped: ["download_failed" as const],
     };
-    vi.mocked(prepareImageAttachments).mockResolvedValue(prepared);
+    vi.mocked(prepareAttachments).mockResolvedValue(prepared);
     const env = makeEnv();
 
     await expect(
@@ -326,13 +322,17 @@ describe("startSessionAndSendPrompt", () => {
         threadTs: "111.222",
         messageText: "What is wrong in this screenshot?",
         actor,
-        images,
+        files: images.map((attachment) => ({ attachment })),
         traceId: "trace-1",
       })
     ).resolves.toEqual({ sessionId: "session-1" });
 
-    expect(prepareImageAttachments).toHaveBeenCalledWith(env, images, "trace-1");
-    const prepareOrder = vi.mocked(prepareImageAttachments).mock.invocationCallOrder[0]!;
+    expect(prepareAttachments).toHaveBeenCalledWith(
+      env,
+      images.map((attachment) => ({ attachment })),
+      "trace-1"
+    );
+    const prepareOrder = vi.mocked(prepareAttachments).mock.invocationCallOrder[0]!;
     const createOrder = vi.mocked(createSession).mock.invocationCallOrder[0]!;
     expect(prepareOrder).toBeLessThan(createOrder);
     expect(deliverPrompt).toHaveBeenCalledWith(
@@ -341,13 +341,13 @@ describe("startSessionAndSendPrompt", () => {
         sessionId: "session-1",
         content: expect.stringContaining("What is wrong in this screenshot?"),
         attachments: prepared,
-        imageOnly: false,
+        attachmentOnly: false,
       })
     );
   });
 
   it("never creates a session for an image-only request whose images were all lost", async () => {
-    vi.mocked(prepareImageAttachments).mockResolvedValue({
+    vi.mocked(prepareAttachments).mockResolvedValue({
       files: [],
       dropped: ["download_failed"],
     });
@@ -360,15 +360,17 @@ describe("startSessionAndSendPrompt", () => {
         threadTs: "111.222",
         messageText: "See the attached image(s).",
         actor,
-        images: [
+        files: [
           {
-            id: "F1",
-            name: "screenshot.png",
-            mimetype: "image/png",
-            downloadUrl: "https://files.slack.com/x",
+            attachment: {
+              id: "F1",
+              name: "screenshot.png",
+              mimetype: "image/png",
+              downloadUrl: "https://files.slack.com/x",
+            },
           },
         ],
-        imageOnly: true,
+        attachmentOnly: true,
       })
     ).resolves.toBeNull();
 
@@ -383,9 +385,41 @@ describe("startSessionAndSendPrompt", () => {
     );
   });
 
+  it("starts a file-only PDF request when its download succeeds", async () => {
+    const attachment = {
+      id: "F2",
+      name: "report.pdf",
+      mimetype: "application/pdf",
+      downloadUrl: "https://files.slack.com/report",
+    };
+    const prepared = {
+      files: [{ attachment, bytes: new TextEncoder().encode("%PDF-test") }],
+      dropped: ["unsupported_format" as const],
+    };
+    vi.mocked(prepareAttachments).mockResolvedValue(prepared);
+    await expect(
+      startSessionAndSendPrompt(makeEnv(), {
+        target: repositoryTarget,
+        channel: "C123",
+        threadTs: "111.222",
+        messageText: "See the attached file(s).",
+        actor,
+        files: [{ dropReason: "unsupported_format" }, { attachment }],
+        attachmentOnly: true,
+      })
+    ).resolves.toEqual({ sessionId: "session-1" });
+    expect(deliverPrompt).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        attachments: prepared,
+        attachmentOnly: true,
+      })
+    );
+  });
+
   it("posts no extra error when delivery already notified an image-only total loss", async () => {
-    vi.mocked(deliverPrompt).mockResolvedValue({ ok: false, reason: "no_images_delivered" });
-    vi.mocked(prepareImageAttachments).mockResolvedValue({
+    vi.mocked(deliverPrompt).mockResolvedValue({ ok: false, reason: "no_attachments_delivered" });
+    vi.mocked(prepareAttachments).mockResolvedValue({
       files: [
         {
           attachment: {
@@ -408,15 +442,17 @@ describe("startSessionAndSendPrompt", () => {
         threadTs: "111.222",
         messageText: "See the attached image(s).",
         actor,
-        images: [
+        files: [
           {
-            id: "F1",
-            name: "screenshot.png",
-            mimetype: "image/png",
-            downloadUrl: "https://files.slack.com/x",
+            attachment: {
+              id: "F1",
+              name: "screenshot.png",
+              mimetype: "image/png",
+              downloadUrl: "https://files.slack.com/x",
+            },
           },
         ],
-        imageOnly: true,
+        attachmentOnly: true,
       })
     ).resolves.toBeNull();
 

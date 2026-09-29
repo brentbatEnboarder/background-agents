@@ -255,7 +255,9 @@ describe("POST /internal/prompt", () => {
 
     expect(messages[0].attachments).not.toBeNull();
     const parsed = JSON.parse(messages[0].attachments);
-    expect(parsed).toEqual([{ name: "screenshot.png", attachmentId, mimeType: "image/png" }]);
+    expect(parsed).toEqual([
+      { name: "screenshot.png", attachmentId, mimeType: "image/png", kind: "image" },
+    ]);
     const attachments = await queryDO<{ message_id: string }>(
       stub,
       "SELECT message_id FROM attachments WHERE id = ?",

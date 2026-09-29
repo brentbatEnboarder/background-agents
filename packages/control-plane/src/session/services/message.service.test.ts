@@ -260,6 +260,7 @@ describe("MessageService", () => {
         name: "screenshot.png",
         attachmentId: "attachment-1",
         mimeType: "image/png",
+        kind: "image",
       },
     ]);
     expect(result.messages[1]?.attachments).toBeNull();

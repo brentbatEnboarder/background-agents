@@ -437,7 +437,9 @@ class TestTranslation:
             HarnessPrompt(
                 message_id="m1",
                 text="look",
-                attachments=({"name": "a.png", "mimeType": "image/png", "content": "QUJD"},),
+                attachments=(
+                    {"name": "a.png", "mimeType": "image/png", "kind": "image", "content": "QUJD"},
+                ),
             ),
         )
         content = h.client.queries[0][0]["message"]["content"]
@@ -445,6 +447,35 @@ class TestTranslation:
             "type": "image",
             "source": {"type": "base64", "media_type": "image/png", "data": "QUJD"},
         }
+
+    @pytest.mark.asyncio
+    async def test_mixed_documents_and_images(self, tmp_path: Path) -> None:
+        import json
+
+        h = Harness(tmp_path, turns=[[_result(0.0)]])
+        await h.harness.open()
+        await h.harness.create_session()
+        document = {
+            "name": "x.txt",
+            "mimeType": "text/plain",
+            "kind": "document",
+            "content": json.dumps(
+                {
+                    "method": "utf-8",
+                    "sourceBytes": 1,
+                    "truncated": None,
+                    "segments": [{"location": "line 1", "text": "x"}],
+                }
+            ),
+        }
+        image = {"name": "a.png", "mimeType": "image/png", "kind": "image", "content": "QUJD"}
+        await _run(
+            h.harness,
+            HarnessPrompt(message_id="m1", text="look", attachments=(document, image, document)),
+        )
+        content = h.client.queries[0][0]["message"]["content"]
+        assert [part["type"] for part in content] == ["text", "text", "image", "text"]
+        assert "line 1" in content[1]["text"]
 
     @pytest.mark.asyncio
     async def test_subagent_activity_is_nested_and_its_text_dropped(self, tmp_path: Path) -> None:
