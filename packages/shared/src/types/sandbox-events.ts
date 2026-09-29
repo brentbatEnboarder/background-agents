@@ -164,6 +164,7 @@ export const sandboxEventSchema = z.discriminatedUnion("type", [
     type: z.literal("warning"),
     scope: z.enum(["sync", "setup", "start", "assembly", "secrets", "media", "budget", "provider"]),
     message: z.string(),
+    messageId: z.string().optional(),
     repoOwner: z.string().optional(),
     repoName: z.string().optional(),
     sandboxId: z.string().optional(),

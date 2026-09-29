@@ -1,9 +1,9 @@
 import {
   sessionAttachmentMimeTypeSchema,
   sessionAttachmentIdSchema,
+  sessionAttachmentMaxBytes,
 } from "@open-inspect/shared/types/session-attachments";
 import { z } from "zod";
-import { SESSION_ATTACHMENT_IMAGE_MAX_BYTES } from "../media";
 
 const objectKeySchema = z.string().min(1).max(1024);
 
@@ -12,9 +12,13 @@ const recordAttachmentCommandSchema = z
     action: z.literal("record"),
     attachmentId: sessionAttachmentIdSchema,
     mimeType: sessionAttachmentMimeTypeSchema,
-    sizeBytes: z.number().int().positive().max(SESSION_ATTACHMENT_IMAGE_MAX_BYTES),
+    sizeBytes: z.number().int().positive(),
   })
-  .strict();
+  .strict()
+  .refine((record) => record.sizeBytes <= sessionAttachmentMaxBytes(record.mimeType), {
+    message: "Attachment exceeds the source byte limit for its type",
+    path: ["sizeBytes"],
+  });
 
 const completeAttachmentCleanupCommandSchema = z
   .object({

@@ -4,7 +4,11 @@ import {
   postMessage,
   updateMessage,
 } from "@open-inspect/shared/slack";
-import { toImageAttachments, type SlackImageAttachment } from "../attachments";
+import {
+  classifySlackFiles,
+  notifyDroppedAttachments,
+  type ClassifiedSlackFile,
+} from "../attachments";
 import { collectForwardedMessages } from "../forwarded-messages";
 import { createLogger } from "../logger";
 import {
@@ -58,6 +62,7 @@ export async function handleTargetSelection(
     previousMessages,
     channelName,
     channelDescription,
+    attachmentOnly,
     imageOnly,
     sourceMessage,
     unattributedPrompt,
@@ -75,7 +80,7 @@ export async function handleTargetSelection(
 
   // Pending requests persist only the source-message locator; re-fetch the
   // files from Slack now that the target is known.
-  let images: SlackImageAttachment[] = [];
+  let files: ClassifiedSlackFile[] = [];
   if (sourceMessage) {
     const lookup = await getMessageDetails(
       env.SLACK_BOT_TOKEN,
@@ -87,7 +92,7 @@ export async function handleTargetSelection(
       // The pending prompt already preserves any forwarded-message text, but
       // its images live on the attachment and are re-fetched here like the rest.
       const forwarded = collectForwardedMessages(lookup.attachments);
-      images = toImageAttachments([...lookup.files, ...forwarded.files], traceId);
+      files = classifySlackFiles([...lookup.files, ...forwarded.files]);
     } else {
       log.warn("slack.attachment.file_lookup_failed", {
         trace_id: traceId,
@@ -95,17 +100,37 @@ export async function handleTargetSelection(
         message_ts: sourceMessage.ts,
         slack_error: lookup.error,
       });
+      files = [{ dropReason: "download_failed" }];
     }
-    if (imageOnly && images.length === 0) {
+    if (
+      (attachmentOnly || imageOnly) &&
+      (files.length === 0 || (files.length === 1 && files[0]?.dropReason === "download_failed"))
+    ) {
       // The request had no text: without its images there is nothing to run.
       await postMessage(
         env.SLACK_BOT_TOKEN,
         channel,
-        "Sorry, I couldn't retrieve the attached image(s) from Slack, so I didn't start on this request. Please try again.",
+        "Sorry, I couldn't retrieve the attached file(s) from Slack, so I didn't start on this request. Please try again. Accepted formats: PNG, JPEG, WebP, GIF, Markdown, TXT, CSV, TSV, and text-based PDF.",
         { thread_ts: threadKey }
       );
       return;
     }
+  }
+  if ((attachmentOnly || imageOnly) && files.length > 0 && files.every((file) => file.dropReason)) {
+    await notifyDroppedAttachments(
+      env,
+      channel,
+      threadKey,
+      {
+        references: [],
+        dropped: files
+          .slice(0, 6)
+          .map((file) => file.dropReason!)
+          .concat(files.slice(6).map(() => "over_cap" as const)),
+      },
+      { traceId, nothingSent: true }
+    );
+    return;
   }
 
   const label = escapeMrkdwnText(targetLabel(target));
@@ -133,8 +158,8 @@ export async function handleTargetSelection(
     previousMessages,
     channelName,
     channelDescription,
-    images,
-    imageOnly,
+    files,
+    attachmentOnly: attachmentOnly || imageOnly,
     traceId,
   });
   if (!sessionResult) return;

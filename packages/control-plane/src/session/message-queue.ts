@@ -487,6 +487,14 @@ export class SessionMessageQueue {
     const resolvedEffort =
       validateReasoningEffort(resolvedModel, requestedEffort ?? undefined, this.log) ?? undefined;
 
+    let attachmentOnly = false;
+    if (message.source === "slack" && message.callback_context) {
+      try {
+        attachmentOnly = JSON.parse(message.callback_context)?.attachmentOnly === true;
+      } catch {
+        // Legacy or malformed context cannot assert file-only intent.
+      }
+    }
     const command: SandboxCommand = {
       type: "prompt",
       messageId: message.id,
@@ -500,6 +508,7 @@ export class SessionMessageQueue {
       attachments: parseStoredSessionAttachments(message.attachments, () =>
         this.log.error("prompt.invalid_stored_attachments")
       ),
+      attachmentOnly,
     };
 
     const claimed = this.messageRepository.startMessageProcessing(
@@ -774,7 +783,19 @@ export class SessionMessageQueue {
           source: data.source,
           model: messageModel,
           reasoningEffort: messageReasoningEffort,
-          attachments: attachments ? JSON.stringify(attachments) : null,
+          attachments: attachments
+            ? JSON.stringify(
+                attachments.map((attachment) =>
+                  attachment.kind === "image"
+                    ? {
+                        name: attachment.name,
+                        attachmentId: attachment.attachmentId,
+                        mimeType: attachment.mimeType,
+                      }
+                    : attachment
+                )
+              )
+            : null,
           callbackContext: data.callbackContext ? JSON.stringify(data.callbackContext) : null,
           clientRequestId: data.clientRequestId ?? null,
           requestFingerprint: requestFingerprint ?? null,

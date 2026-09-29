@@ -1,9 +1,14 @@
 import {
-  resolvedSessionAttachmentsSchema,
+  resolvedSessionAttachmentSchema,
   sessionAttachmentMimeTypeSchema,
+  sessionAttachmentKind,
+  sessionAttachmentReferenceSchema,
+  SESSION_ATTACHMENT_IMAGE_MIME_TYPES,
+  MAX_SESSION_ATTACHMENTS_PER_MESSAGE,
   type SessionAttachmentReference,
   type ResolvedSessionAttachment,
 } from "@open-inspect/shared/types/session-attachments";
+import { z } from "zod";
 import type { SessionAttachmentRepository } from "./session-attachment-repository";
 
 export class SessionAttachmentError extends Error {}
@@ -21,7 +26,20 @@ export function parseStoredSessionAttachments(
 ): ResolvedSessionAttachment[] | undefined {
   if (!value) return undefined;
   try {
-    const parsed = resolvedSessionAttachmentsSchema.safeParse(JSON.parse(value));
+    const stored: unknown = JSON.parse(value);
+    // Images keep the predecessor's on-disk shape; documents require the new kind marker.
+    const parsed = z
+      .array(
+        z.union([
+          resolvedSessionAttachmentSchema,
+          sessionAttachmentReferenceSchema
+            .extend({ mimeType: z.enum(SESSION_ATTACHMENT_IMAGE_MIME_TYPES) })
+            .strict()
+            .transform((attachment) => ({ ...attachment, kind: "image" as const })),
+        ])
+      )
+      .max(MAX_SESSION_ATTACHMENTS_PER_MESSAGE)
+      .safeParse(stored);
     if (parsed.success) return parsed.data.length > 0 ? parsed.data : undefined;
   } catch {
     // Report malformed JSON through the same callback as invalid attachment metadata.
@@ -58,12 +76,13 @@ export function resolveSessionAttachments(
     }
     const mimeType = sessionAttachmentMimeTypeSchema.safeParse(row.mime_type);
     if (!mimeType.success) {
-      throw new SessionAttachmentError("Attachment is not a supported image");
+      throw new SessionAttachmentError("Attachment is not a supported format");
     }
     return {
       name: reference.name,
       attachmentId: row.id,
       mimeType: mimeType.data,
+      kind: sessionAttachmentKind(mimeType.data),
     };
   });
 

@@ -3,15 +3,42 @@ import { z } from "zod";
 export const MAX_SESSION_ATTACHMENTS_PER_MESSAGE = 6;
 /** Per-image byte cap, enforced by the attachment store and every producer. */
 export const SESSION_ATTACHMENT_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+export const SESSION_ATTACHMENT_TEXT_MAX_BYTES = 2 * 1024 * 1024;
+export const SESSION_ATTACHMENT_PDF_MAX_BYTES = 10 * 1024 * 1024;
 export const SESSION_ATTACHMENT_IMAGE_MIME_TYPES = [
   "image/png",
   "image/jpeg",
   "image/webp",
   "image/gif",
 ] as const;
+export const SESSION_ATTACHMENT_DOCUMENT_MIME_TYPES = [
+  "text/markdown",
+  "text/plain",
+  "text/csv",
+  "text/tab-separated-values",
+  "application/pdf",
+] as const;
 
-export const sessionAttachmentMimeTypeSchema = z.enum(SESSION_ATTACHMENT_IMAGE_MIME_TYPES);
+export const sessionAttachmentMimeTypeSchema = z.enum([
+  ...SESSION_ATTACHMENT_IMAGE_MIME_TYPES,
+  ...SESSION_ATTACHMENT_DOCUMENT_MIME_TYPES,
+]);
 export type SessionAttachmentMimeType = z.infer<typeof sessionAttachmentMimeTypeSchema>;
+export type SessionAttachmentKind = "image" | "document";
+
+export function sessionAttachmentKind(mimeType: SessionAttachmentMimeType): SessionAttachmentKind {
+  return (SESSION_ATTACHMENT_IMAGE_MIME_TYPES as readonly string[]).includes(mimeType)
+    ? "image"
+    : "document";
+}
+
+export function sessionAttachmentMaxBytes(mimeType: SessionAttachmentMimeType): number {
+  return mimeType === "application/pdf"
+    ? SESSION_ATTACHMENT_PDF_MAX_BYTES
+    : sessionAttachmentKind(mimeType) === "image"
+      ? SESSION_ATTACHMENT_IMAGE_MAX_BYTES
+      : SESSION_ATTACHMENT_TEXT_MAX_BYTES;
+}
 
 export const sessionAttachmentIdSchema = z
   .string()
@@ -19,7 +46,7 @@ export const sessionAttachmentIdSchema = z
   .max(128)
   .regex(/^[A-Za-z0-9-]+$/);
 
-/** Client-supplied reference to an image previously uploaded for this session. */
+/** Client-supplied reference to an attachment previously uploaded for this session. */
 export const sessionAttachmentReferenceSchema = z
   .object({
     attachmentId: sessionAttachmentIdSchema,
@@ -36,8 +63,13 @@ export type SessionAttachmentReference = z.infer<typeof sessionAttachmentReferen
 export const resolvedSessionAttachmentSchema = sessionAttachmentReferenceSchema
   .extend({
     mimeType: sessionAttachmentMimeTypeSchema,
+    kind: z.enum(["image", "document"]),
   })
-  .strict();
+  .strict()
+  .refine((attachment) => attachment.kind === sessionAttachmentKind(attachment.mimeType), {
+    message: "Attachment kind does not match MIME type",
+    path: ["kind"],
+  });
 export type ResolvedSessionAttachment = z.infer<typeof resolvedSessionAttachmentSchema>;
 
 export const resolvedSessionAttachmentsSchema = z

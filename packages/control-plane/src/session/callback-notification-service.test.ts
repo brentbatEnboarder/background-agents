@@ -101,6 +101,38 @@ describe("CallbackNotificationService", () => {
     harness = createTestHarness();
   });
 
+  it("signs document warnings using saved Slack context, never warning text as coordinates", async () => {
+    const warning =
+      "Documents: skipped (2 malformed pdf). Skipped or omitted content was not analyzed.";
+    harness.repository.getMessageCallbackContext.mockReturnValue({
+      source: "slack",
+      callback_context: JSON.stringify({
+        source: "slack",
+        channel: "C123",
+        threadTs: "111.222",
+        repoFullName: "acme/app",
+        model: "m",
+      }),
+    });
+    harness.slackBot.fetch.mockResolvedValue(new Response(null, { status: 200 }));
+    await harness.service.notifyDocumentWarning("msg-1", warning);
+    expect(harness.slackBot.fetch).toHaveBeenCalledOnce();
+    const [url, init] = harness.slackBot.fetch.mock.calls[0]!;
+    expect(url).toBe("https://internal/callbacks/document-warning");
+    const payload = JSON.parse(String(init?.body));
+    expect(payload.context.channel).toBe("C123");
+    expect(payload.warning).toBe(warning);
+    expect(await verifyCallbackSignature(payload, "test-secret")).toBe(true);
+
+    await harness.service.notifyDocumentWarning("msg-1", "Documents: <#C999> secret");
+    harness.repository.getMessageCallbackContext.mockReturnValue({
+      source: "web",
+      callback_context: "{}",
+    });
+    await harness.service.notifyDocumentWarning("msg-1", warning);
+    expect(harness.slackBot.fetch).toHaveBeenCalledOnce();
+  });
+
   describe("notifyComplete", () => {
     it("skips when no callback context", async () => {
       vi.mocked(harness.repository.getMessageCallbackContext).mockReturnValue(null);

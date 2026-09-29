@@ -13,6 +13,9 @@ import {
   linearCompletionCallbackPayloadSchema,
   linearToolCallCallbackPayloadSchema,
   SLACK_ACTIVITY_REFRESH_KIND,
+  SLACK_DOCUMENT_WARNING_KIND,
+  slackCallbackContextSchema,
+  slackDocumentWarningSchema,
 } from "@open-inspect/shared/types/session-api";
 import { callbackSigningSecret, type CallbackDestination } from "../auth/service/callback-signing";
 import type { Logger } from "../logger";
@@ -144,6 +147,47 @@ export class CallbackNotificationService {
    */
   private async signPayload(data: object, secret: string): Promise<string> {
     return computeHmacHex(JSON.stringify(data), secret);
+  }
+
+  async notifyDocumentWarning(messageId: string, warning: string): Promise<void> {
+    if (!slackDocumentWarningSchema.safeParse(warning).success) return;
+    const message = this.messageRepository.getMessageCallbackContext(messageId);
+    if (message?.source !== "slack" || !message.callback_context) return;
+
+    let context: unknown;
+    try {
+      context = JSON.parse(message.callback_context);
+    } catch {
+      return;
+    }
+    const parsed = slackCallbackContextSchema.safeParse(context);
+    if (!parsed.success || !parsed.data.channel || !parsed.data.threadTs) return;
+    const { binding, secret } = this.resolveCallbackRoute("slack");
+    if (!binding || !secret) return;
+
+    const data = {
+      kind: SLACK_DOCUMENT_WARNING_KIND,
+      sessionId: this.getSessionId(),
+      messageId,
+      warning,
+      timestamp: Date.now(),
+      context: parsed.data,
+    };
+    try {
+      const response = await binding.fetch("https://internal/callbacks/document-warning", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...data, signature: await this.signPayload(data, secret) }),
+      });
+      if (!response.ok) {
+        this.log.warn("callback.document_warning", {
+          message_id: messageId,
+          http_status: response.status,
+        });
+      }
+    } catch {
+      this.log.warn("callback.document_warning", { message_id: messageId, outcome: "error" });
+    }
   }
 
   /**

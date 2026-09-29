@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { SESSION_ATTACHMENT_MAX_REQUEST_BYTES } from "../media";
+import {
+  SESSION_ATTACHMENT_TEXT_MAX_BYTES,
+  SESSION_ATTACHMENT_PDF_MAX_BYTES,
+} from "@open-inspect/shared/types/session-attachments";
 import type { Env } from "../types";
-import { handleAttachmentPost } from "./session-attachments";
+import { handleAttachmentGet, handleAttachmentPost } from "./session-attachments";
 import type { RequestContext } from "./shared";
 import type { SqlDatabase } from "../db/sql-database";
 import { TEST_BACKGROUND_TASK_CONTEXT, fakeSessionRuntimeDispatch } from "../router.test-support";
@@ -48,6 +52,15 @@ function attachmentUploadRequest(): Request {
   });
 }
 
+function documentUploadRequest(bytes: Uint8Array, mimeType: string, name = "file"): Request {
+  const form = new FormData();
+  form.append("file", new File([bytes], name, { type: mimeType }));
+  return new Request("https://test.local/sessions/session-1/attachments", {
+    method: "POST",
+    body: form,
+  });
+}
+
 function oversizedStreamingUploadRequest(): Request {
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -64,6 +77,90 @@ function oversizedStreamingUploadRequest(): Request {
 }
 
 describe("session attachment routes", () => {
+  it.each([
+    "text/plain",
+    "text/markdown",
+    "text/csv",
+    "text/tab-separated-values",
+    "application/pdf",
+  ])("persists canonical %s without storing the supplied filename", async (mimeType) => {
+    let command: unknown;
+    const fetch = vi.fn(async (request: Request) => {
+      command = await request.json();
+      return Response.json({ status: "ok" });
+    });
+    const { env, put } = createEnv(fetch);
+    const bytes = new TextEncoder().encode(mimeType === "application/pdf" ? "%PDF-1.4\n" : "hello");
+    const response = await handleAttachmentPost(
+      documentUploadRequest(bytes, mimeType, "secret-name.csv"),
+      env,
+      { id: "session-1" },
+      withSessionRuntime(env, createContext())
+    );
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({ attachmentId: expect.any(String), mimeType });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(command).toMatchObject({ action: "record", mimeType, sizeBytes: bytes.length });
+    expect(JSON.stringify(command)).not.toContain("secret-name");
+    expect(put).toHaveBeenCalledWith(
+      expect.stringMatching(/^sessions\/session-1\/attachments\/[^/]+$/),
+      bytes,
+      { contentType: mimeType }
+    );
+  });
+
+  it("rejects over-limit text and malformed documents before registration", async () => {
+    const fetch = vi.fn(async () => Response.json({ status: "ok" }));
+    const { env, put } = createEnv(fetch);
+    for (const request of [
+      documentUploadRequest(
+        new Uint8Array(SESSION_ATTACHMENT_TEXT_MAX_BYTES + 1).fill(65),
+        "text/plain"
+      ),
+      documentUploadRequest(
+        new Uint8Array(SESSION_ATTACHMENT_PDF_MAX_BYTES + 1).fill(65),
+        "application/pdf"
+      ),
+      documentUploadRequest(new TextEncoder().encode("%PDF-1.4"), "text/plain"),
+      documentUploadRequest(new TextEncoder().encode("not pdf"), "application/pdf"),
+      documentUploadRequest(Uint8Array.from([0xff]), "text/plain"),
+    ]) {
+      const response = await handleAttachmentPost(
+        request,
+        env,
+        { id: "session-1" },
+        withSessionRuntime(env, createContext())
+      );
+      expect(response.status).toBe(400);
+    }
+    expect(fetch).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("serves a stored document with canonical content type", async () => {
+    const { env } = createEnv(async () => Response.json({ status: "ok" }));
+    const bytes = new TextEncoder().encode("hello");
+    const metadata = {
+      size: bytes.length,
+      writeHttpMetadata: (headers: Headers) => headers.set("Content-Type", "text/plain"),
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(bytes);
+          controller.close();
+        },
+      }),
+    };
+    (env.MEDIA_BUCKET.get as ReturnType<typeof vi.fn>).mockResolvedValue(metadata);
+    const response = await handleAttachmentGet(
+      new Request("https://test.local/sessions/session-1/attachments/att-1"),
+      env,
+      { id: "session-1", attachmentId: "att-1" },
+      withSessionRuntime(env, createContext())
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe("text/plain");
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
+  });
   it("bounds streamed requests when Content-Length is unavailable", async () => {
     const fetch = vi.fn(async () => Response.json({ status: "ok" }));
     const { env, put } = createEnv(fetch);

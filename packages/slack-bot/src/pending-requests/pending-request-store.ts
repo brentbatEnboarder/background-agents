@@ -5,7 +5,7 @@ import type { Env } from "../types";
 const PENDING_REQUEST_TTL_MS = 60 * 60 * 1000;
 
 /**
- * Locator of the Slack message whose image files are re-fetched at launch.
+ * Locator of the Slack message whose files are re-fetched at launch.
  * Only the coordinates are persisted — never the file objects themselves — so
  * no URL-bearing Slack payloads sit in KV across the clarification round-trip.
  */
@@ -26,7 +26,9 @@ const pendingRequestSchema = z.object({
   previousMessages: z.array(z.string()).optional(),
   channelName: z.string().optional(),
   channelDescription: z.string().optional(),
-  /** True when the original message had no user text, only images. */
+  /** True when the original message had no user text, only files. */
+  attachmentOnly: z.boolean().optional(),
+  /** Persisted requests from before the generic attachment rollout. */
   imageOnly: z.boolean().optional(),
   sourceMessage: sourceMessageSchema.optional(),
 });

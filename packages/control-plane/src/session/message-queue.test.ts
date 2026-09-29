@@ -1035,12 +1035,12 @@ describe("SessionMessageQueue", () => {
     );
   });
 
-  it("rejects attachment rows with unsupported image metadata", async () => {
+  it("rejects attachment rows with unsupported metadata", async () => {
     const h = buildQueue();
     h.attachmentRepository.getUnreferenced.mockReturnValue([
       {
         id: "up-invalid",
-        mime_type: "application/pdf",
+        mime_type: "application/zip",
         size_bytes: 100,
         object_key: "sessions/sess-1/attachments/up-invalid",
         message_id: null,
@@ -1059,7 +1059,7 @@ describe("SessionMessageQueue", () => {
       expect.anything(),
       expect.objectContaining({
         code: "INVALID_ATTACHMENTS",
-        message: "Attachment is not a supported image",
+        message: "Attachment is not a supported format",
       })
     );
   });
@@ -1253,6 +1253,36 @@ describe("SessionMessageQueue", () => {
       type: "prompt_queue_updated",
       promptQueue: expect.any(Array),
     });
+  });
+
+  it("dispatches file-only intent from the persisted Slack message, not its placeholder text", async () => {
+    const h = buildQueue();
+    const sandboxWs = { readyState: 1 } as WebSocket;
+    h.repository.getNextPendingMessage.mockReturnValue(
+      createMessage({
+        id: "file-only",
+        source: "slack",
+        content: "Please analyze the attached file.",
+        callback_context: JSON.stringify({
+          source: "slack",
+          channel: "C1",
+          threadTs: "1.2",
+          attachmentOnly: true,
+        }),
+      })
+    );
+    h.wsManager.getSandboxSocket.mockReturnValue(sandboxWs);
+
+    await h.queue.processMessageQueue();
+
+    expect(h.wsManager.send).toHaveBeenCalledWith(
+      sandboxWs,
+      expect.objectContaining({
+        type: "prompt",
+        messageId: "file-only",
+        attachmentOnly: true,
+      })
+    );
   });
 
   it("leaves the prompt pending and timeline untouched when sandbox send fails", async () => {

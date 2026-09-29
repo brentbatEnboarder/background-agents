@@ -9,6 +9,12 @@ import {
   RepositoryPairValidationError,
   serverMessageSchema,
   sessionAttachmentUploadResponseSchema,
+  resolvedSessionAttachmentsSchema,
+  sessionAttachmentReferencesSchema,
+  sessionAttachmentMaxBytes,
+  SESSION_ATTACHMENT_IMAGE_MAX_BYTES,
+  SESSION_ATTACHMENT_TEXT_MAX_BYTES,
+  SESSION_ATTACHMENT_PDF_MAX_BYTES,
 } from ".";
 import { sessionParticipantProfilesResponseSchema } from "./sessions";
 import { listArtifactsResponseSchema } from "./artifacts";
@@ -208,11 +214,78 @@ describe("boundary schemas", () => {
       expect(
         sessionAttachmentUploadResponseSchema.safeParse({
           attachmentId: "att-1",
-          mimeType: "application/pdf",
+          mimeType: "application/zip",
         }).success
       ).toBe(false);
       expect(
         sessionAttachmentUploadResponseSchema.safeParse({ attachmentId: "att-1" }).success
+      ).toBe(false);
+    });
+  });
+
+  describe("resolved session attachments", () => {
+    it.each([
+      ["image/png", "image"],
+      ["image/jpeg", "image"],
+      ["image/webp", "image"],
+      ["image/gif", "image"],
+      ["text/markdown", "document"],
+      ["text/plain", "document"],
+      ["text/csv", "document"],
+      ["text/tab-separated-values", "document"],
+      ["application/pdf", "document"],
+    ] as const)("accepts %s with server kind %s", (mimeType, kind) => {
+      expect(
+        resolvedSessionAttachmentsSchema.safeParse([
+          { attachmentId: "att-1", name: "file", mimeType, kind },
+        ]).success
+      ).toBe(true);
+      expect(sessionAttachmentMaxBytes(mimeType)).toBe(
+        kind === "image"
+          ? SESSION_ATTACHMENT_IMAGE_MAX_BYTES
+          : mimeType === "application/pdf"
+            ? SESSION_ATTACHMENT_PDF_MAX_BYTES
+            : SESSION_ATTACHMENT_TEXT_MAX_BYTES
+      );
+    });
+
+    it("rejects mismatched, missing, and extra metadata", () => {
+      const base = {
+        attachmentId: "att-1",
+        name: "file",
+        mimeType: "application/pdf",
+        kind: "document",
+      };
+      for (const invalid of [
+        { ...base, kind: "image" },
+        { ...base, kind: undefined },
+        { ...base, mimeType: "application/zip" },
+        { ...base, attachmentId: "bad id" },
+        { ...base, objectKey: "forged" },
+      ]) {
+        expect(resolvedSessionAttachmentsSchema.safeParse([invalid]).success).toBe(false);
+      }
+      expect(
+        sessionAttachmentReferencesSchema.safeParse([
+          { attachmentId: "att-1", name: "file", kind: "document" },
+        ]).success
+      ).toBe(false);
+    });
+
+    it("limits both references and resolved attachments to six", () => {
+      const references = Array.from({ length: 7 }, (_, i) => ({
+        attachmentId: `att-${i}`,
+        name: "file",
+      }));
+      expect(sessionAttachmentReferencesSchema.safeParse(references).success).toBe(false);
+      expect(
+        resolvedSessionAttachmentsSchema.safeParse(
+          references.map((reference) => ({
+            ...reference,
+            mimeType: "text/plain",
+            kind: "document",
+          }))
+        ).success
       ).toBe(false);
     });
   });

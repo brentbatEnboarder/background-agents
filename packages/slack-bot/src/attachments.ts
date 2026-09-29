@@ -1,15 +1,14 @@
 /**
- * Forward image files attached to Slack messages into a session as prompt
+ * Forward Slack files into a session as prompt
  * attachments.
  *
  * Slack file bytes live behind `url_private`, which requires the bot token to
  * download (and the `files:read` scope). Raw Slack file payloads are
- * normalized into {@link SlackImageAttachment} once at event ingress; every
- * later stage (download, upload, pending-request state) works only with that
- * model. Each supported image is downloaded and uploaded to the control
+ * classified once at event ingress; every later stage works with that
+ * result. Each supported file is downloaded and uploaded to the control
  * plane's session-attachments store; the prompt then carries only
  * `{ attachmentId, name }` references, matching how the web composer attaches
- * images.
+ * files.
  */
 
 import { postMessage, type SlackMessageFile } from "@open-inspect/shared/slack";
@@ -17,6 +16,9 @@ import {
   MAX_SESSION_ATTACHMENTS_PER_MESSAGE,
   SESSION_ATTACHMENT_IMAGE_MAX_BYTES,
   SESSION_ATTACHMENT_IMAGE_MIME_TYPES,
+  SESSION_ATTACHMENT_DOCUMENT_MIME_TYPES,
+  SESSION_ATTACHMENT_TEXT_MAX_BYTES,
+  SESSION_ATTACHMENT_PDF_MAX_BYTES,
   sessionAttachmentUploadResponseSchema,
   type SessionAttachmentReference,
 } from "@open-inspect/shared/types/session-attachments";
@@ -30,18 +32,23 @@ const log = createLogger("attachments");
 
 const ATTACHMENT_NAME_MAX_LENGTH = 255;
 
-const SUPPORTED_MIME_TYPES = new Set<string>(SESSION_ATTACHMENT_IMAGE_MIME_TYPES);
+// Match the control-plane signed multipart ceiling, including form overhead.
+const MAX_MULTIPART_BYTES = SESSION_ATTACHMENT_IMAGE_MAX_BYTES + 128 * 1024;
+const SUPPORTED_MIME_TYPES = new Set<string>([
+  ...SESSION_ATTACHMENT_IMAGE_MIME_TYPES,
+  ...SESSION_ATTACHMENT_DOCUMENT_MIME_TYPES,
+]);
 
-/** Prompt body used when a message carries images but no user text. */
-export const IMAGE_ONLY_PROMPT_TEXT = "See the attached image(s).";
+/** Prompt body used when a message carries files but no user text. */
+export const ATTACHMENT_ONLY_PROMPT_TEXT = "See the attached file(s).";
 
 /**
- * A Slack-attached image validated at event ingress: supported mime type and a
+ * A Slack-attached file validated at event ingress: supported mime type and a
  * Slack-hosted download URL the bot token may be sent to. This is the only
  * shape that flows past the event handlers — raw `SlackMessageFile` payloads
  * never reach downloads, session launch, or KV state.
  */
-export interface SlackImageAttachment {
+export interface SlackAttachment {
   /** Slack file id, used for log correlation only. */
   id?: string;
   /** Display name, bounded to the attachment store's length limit. */
@@ -52,20 +59,27 @@ export interface SlackImageAttachment {
   /** https URL on slack.com / *.slack.com serving the file bytes. */
   downloadUrl: string;
 }
+export type ClassifiedSlackFile =
+  | { attachment: SlackAttachment; dropReason?: never }
+  | { attachment?: never; dropReason: SlackAttachmentDropReason };
 
-/** Why an attached image did not make it to the session. */
+/** Why an attached file did not make it to the session. */
 export type SlackAttachmentDropReason =
+  | "unsupported_format"
+  | "untrusted_url"
   | "download_failed"
+  | "empty"
+  | "invalid_content"
   | "too_large"
   | "over_cap"
   | "upload_rejected";
 
-/** Downloaded image bytes plus a record of every image that was lost. */
-export interface PreparedImageAttachments {
-  files: Array<{ attachment: SlackImageAttachment; bytes: Uint8Array }>;
+/** Downloaded file bytes plus a record of every file that was lost. */
+export interface PreparedAttachments {
+  files: Array<{ attachment: SlackAttachment; bytes: Uint8Array }>;
   /**
-   * One entry per image the user attached that did NOT make it through, so
-   * callers can surface a visible "couldn't read your image" note — tailored
+   * One entry per file the user attached that did NOT make it through, so
+   * callers can surface a visible warning tailored
    * to the reason — instead of silently dropping it.
    */
   dropped: SlackAttachmentDropReason[];
@@ -96,60 +110,63 @@ function isTrustedSlackFileUrl(raw: string): boolean {
     return false;
   }
   if (url.protocol !== "https:") return false;
-  return url.hostname === "slack.com" || url.hostname.endsWith(".slack.com");
+  return (
+    !url.username &&
+    !url.password &&
+    !url.port &&
+    (url.hostname === "slack.com" || url.hostname.endsWith(".slack.com"))
+  );
 }
 
-/**
- * Normalize raw Slack file payloads into validated image attachments. Called
- * once where files enter the bot (event handlers, pending-request delivery);
- * everything downstream accepts only the result. Non-images are ignored;
- * images that can never be fetched safely — remote (`mode: "external"`) files
- * and non-Slack-hosted URLs — are skipped with a log so the drop is visible.
- */
-export function toImageAttachments(
-  files: SlackMessageFile[] | undefined,
-  traceId?: string
-): SlackImageAttachment[] {
-  if (!files?.length) return [];
-  const attachments: SlackImageAttachment[] = [];
-  for (const file of files) {
-    if (!file.mimetype || !SUPPORTED_MIME_TYPES.has(file.mimetype)) continue;
-    const downloadUrl = file.url_private_download || file.url_private;
-    // Remote files are third-party-hosted and not fetchable with the bot
-    // token; their URLs must never receive it either.
-    if (!downloadUrl || file.mode === "external" || !isTrustedSlackFileUrl(downloadUrl)) {
-      log.warn("slack.attachment.untrusted_url", {
-        trace_id: traceId,
-        file_id: file.id,
-        file_mode: file.mode,
-      });
-      continue;
+/** Keep unsupported and invalid files in place; extensions only refine generic text. */
+export function classifySlackFiles(files: SlackMessageFile[] | undefined): ClassifiedSlackFile[] {
+  return (files ?? []).map((file) => {
+    const rawName = file.name || file.title || "file";
+    const extension = /\.([a-z]+)$/i.exec(rawName)?.[1]?.toLowerCase();
+    let mimetype = file.mimetype;
+    if (mimetype === "text/plain") {
+      if (extension === "md" || extension === "markdown") mimetype = "text/markdown";
+      if (extension === "csv") mimetype = "text/csv";
+      if (extension === "tsv") mimetype = "text/tab-separated-values";
     }
-    const name = file.name || file.title || `${file.id ?? "image"}.png`;
-    attachments.push({
-      id: file.id,
-      name: name.slice(0, ATTACHMENT_NAME_MAX_LENGTH),
-      mimetype: file.mimetype,
-      size: file.size,
-      downloadUrl,
-    });
-  }
-  return attachments;
+    if (!mimetype || !SUPPORTED_MIME_TYPES.has(mimetype))
+      return { dropReason: "unsupported_format" };
+    const downloadUrl = file.url_private_download || file.url_private;
+    if (!downloadUrl || file.mode === "external" || !isTrustedSlackFileUrl(downloadUrl)) {
+      return { dropReason: "untrusted_url" };
+    }
+    const name =
+      [...rawName]
+        .filter((character) => {
+          const code = character.codePointAt(0)!;
+          return code > 31 && code !== 127;
+        })
+        .join("")
+        .slice(0, ATTACHMENT_NAME_MAX_LENGTH) || "file";
+    return { attachment: { id: file.id, name, mimetype, size: file.size, downloadUrl } };
+  });
+}
+
+function maxBytes(mimetype: string): number {
+  if (mimetype.startsWith("text/")) return SESSION_ATTACHMENT_TEXT_MAX_BYTES;
+  return mimetype === "application/pdf"
+    ? SESSION_ATTACHMENT_PDF_MAX_BYTES
+    : SESSION_ATTACHMENT_IMAGE_MAX_BYTES;
 }
 
 /**
- * Fetch an image's bytes with the bot token, enforcing the trusted host policy
- * (re-checked here as defense in depth) and the image byte cap. Returns a drop
+ * Fetch a file's bytes with the bot token, enforcing the trusted host policy
+ * (re-checked here as defense in depth) and its byte cap. Returns a drop
  * reason instead of bytes when the file cannot be safely fetched.
  */
 async function downloadSlackFile(
   token: string,
-  attachment: SlackImageAttachment,
+  attachment: SlackAttachment,
   traceId?: string
 ): Promise<{ bytes: Uint8Array } | { dropReason: SlackAttachmentDropReason }> {
   if (!isTrustedSlackFileUrl(attachment.downloadUrl)) {
     log.warn("slack.attachment.untrusted_url", { trace_id: traceId, file_id: attachment.id });
-    return { dropReason: "download_failed" };
+    return { dropReason: "untrusted_url" };
   }
   try {
     const res = await fetch(attachment.downloadUrl, {
@@ -158,7 +175,7 @@ async function downloadSlackFile(
       redirect: "manual",
       signal: AbortSignal.timeout(OUTBOUND_REQUEST_TIMEOUT_MS),
     });
-    if (!res.ok) {
+    if (!res.ok || res.redirected || (res.status >= 300 && res.status < 400)) {
       log.warn("slack.attachment.download_failed", {
         trace_id: traceId,
         file_id: attachment.id,
@@ -167,7 +184,7 @@ async function downloadSlackFile(
       return { dropReason: "download_failed" };
     }
     const contentLength = Number(res.headers.get("Content-Length"));
-    if (Number.isFinite(contentLength) && contentLength > SESSION_ATTACHMENT_IMAGE_MAX_BYTES) {
+    if (Number.isFinite(contentLength) && contentLength > maxBytes(attachment.mimetype)) {
       log.warn("slack.attachment.size_rejected", {
         trace_id: traceId,
         file_id: attachment.id,
@@ -175,66 +192,64 @@ async function downloadSlackFile(
       });
       return { dropReason: "too_large" };
     }
-    const bytes = await readBodyCapped(res.body, SESSION_ATTACHMENT_IMAGE_MAX_BYTES);
+    const bytes = await readBodyCapped(res.body, maxBytes(attachment.mimetype));
     if (bytes === null || bytes.byteLength === 0) {
       log.warn("slack.attachment.size_rejected", {
         trace_id: traceId,
         file_id: attachment.id,
         size_bytes: bytes === null ? -1 : 0,
       });
-      return { dropReason: bytes === null ? "too_large" : "download_failed" };
+      return { dropReason: bytes === null ? "too_large" : "empty" };
     }
     return { bytes };
-  } catch (e) {
+  } catch {
     log.warn("slack.attachment.download_error", {
       trace_id: traceId,
       file_id: attachment.id,
-      error: e instanceof Error ? e : new Error(String(e)),
+      error_category: "network_error",
     });
     return { dropReason: "download_failed" };
   }
 }
 
 /**
- * Download image bytes for the (capped) attachments concurrently. Runs before
- * a session exists — callers can bail out of session creation when an
- * image-only request yields nothing — and bounds wall-clock time to a single
+ * Download bytes for the (capped) attachments concurrently. Runs before
+ * a session exists so a file-only request with no usable bytes can stop; bounds wall-clock time to a single
  * download timeout regardless of file count, keeping the work well inside the
  * Worker's post-response `waitUntil` window.
  */
-export async function prepareImageAttachments(
+export async function prepareAttachments(
   env: Env,
-  attachments: SlackImageAttachment[],
+  attachments: ClassifiedSlackFile[],
   traceId?: string
-): Promise<PreparedImageAttachments> {
+): Promise<PreparedAttachments> {
   if (attachments.length === 0) return { files: [], dropped: [] };
 
   const eligible = attachments.slice(0, MAX_SESSION_ATTACHMENTS_PER_MESSAGE);
   const dropped: SlackAttachmentDropReason[] = [];
   type DownloadOutcome =
-    | { attachment: SlackImageAttachment; bytes: Uint8Array }
-    | { attachment: SlackImageAttachment; dropReason: SlackAttachmentDropReason };
+    | { attachment: SlackAttachment; bytes: Uint8Array }
+    | { dropReason: SlackAttachmentDropReason };
   const outcomes = await Promise.all(
-    eligible.map(async (attachment): Promise<DownloadOutcome> => {
-      if (
-        typeof attachment.size === "number" &&
-        attachment.size > SESSION_ATTACHMENT_IMAGE_MAX_BYTES
-      ) {
+    eligible.map(async (entry): Promise<DownloadOutcome> => {
+      if (entry.dropReason) return { dropReason: entry.dropReason };
+      const attachment = entry.attachment;
+      if (typeof attachment.size === "number" && attachment.size > maxBytes(attachment.mimetype)) {
         log.warn("slack.attachment.too_large", {
           trace_id: traceId,
           file_id: attachment.id,
           size_bytes: attachment.size,
         });
-        return { attachment, dropReason: "too_large" as const };
+        return { dropReason: "too_large" };
       }
       const download = await downloadSlackFile(env.SLACK_BOT_TOKEN, attachment, traceId);
       return "dropReason" in download
-        ? { attachment, dropReason: download.dropReason }
+        ? { dropReason: download.dropReason }
         : { attachment, bytes: download.bytes };
     })
   );
 
-  const files: PreparedImageAttachments["files"] = [];
+  const files: PreparedAttachments["files"] = [];
   for (const outcome of outcomes) {
     if ("bytes" in outcome) files.push({ attachment: outcome.attachment, bytes: outcome.bytes });
     else dropped.push(outcome.dropReason);
@@ -246,16 +261,19 @@ export async function prepareImageAttachments(
 }
 
 /**
- * Store one image in the session's attachment store and return the prompt
+ * Store one file in the session's attachment store and return the prompt
  * reference, or the failure kind when the control plane rejects it.
  */
 async function uploadToSession(
   env: Env,
   sessionId: string,
-  file: PreparedImageAttachments["files"][number],
+  file: PreparedAttachments["files"][number],
   authorId: string,
   traceId?: string
-): Promise<{ reference: SessionAttachmentReference } | { sessionMissing: boolean }> {
+): Promise<
+  | { reference: SessionAttachmentReference }
+  | { sessionMissing: boolean; dropReason: SlackAttachmentDropReason }
+> {
   const { attachment, bytes } = file;
   try {
     const formData = new FormData();
@@ -266,6 +284,8 @@ async function uploadToSession(
     // single serialization.
     const serialized = new Request("https://internal/", { method: "POST", body: formData });
     const multipartBytes = new Uint8Array(await serialized.arrayBuffer());
+    if (multipartBytes.byteLength > MAX_MULTIPART_BYTES)
+      return { sessionMissing: false, dropReason: "too_large" };
     const contentType = serialized.headers.get("Content-Type");
     if (!contentType) {
       throw new Error("FormData serialization produced no Content-Type");
@@ -288,32 +308,40 @@ async function uploadToSession(
         file_id: attachment.id,
         http_status: response.status,
       });
-      return { sessionMissing: response.status === 404 };
+      return {
+        sessionMissing: response.status === 404,
+        dropReason:
+          response.status === 400
+            ? "invalid_content"
+            : response.status === 413
+              ? "too_large"
+              : "upload_rejected",
+      };
     }
     const parsed = sessionAttachmentUploadResponseSchema.safeParse(await response.json());
-    if (!parsed.success) {
+    if (!parsed.success || parsed.data.mimeType !== attachment.mimetype) {
       log.warn("slack.attachment.upload_failed", {
         trace_id: traceId,
         session_id: sessionId,
         file_id: attachment.id,
-        error: new Error("Invalid attachment upload response"),
+        error_category: "invalid_response",
       });
-      return { sessionMissing: false };
+      return { sessionMissing: false, dropReason: "upload_rejected" };
     }
     return { reference: { attachmentId: parsed.data.attachmentId, name: attachment.name } };
-  } catch (e) {
+  } catch {
     log.warn("slack.attachment.upload_error", {
       trace_id: traceId,
       session_id: sessionId,
       file_id: attachment.id,
-      error: e instanceof Error ? e : new Error(String(e)),
+      error_category: "upload_error",
     });
-    return { sessionMissing: false };
+    return { sessionMissing: false, dropReason: "upload_rejected" };
   }
 }
 
 /**
- * Store the prepared images as attachments on `sessionId` concurrently,
+ * Store the prepared files as attachments on `sessionId` concurrently,
  * returning prompt references in the original order. Failed uploads are
  * recorded (never thrown) so a bad file never blocks the message; the result
  * carries the prepare-stage drops forward so one notification covers both.
@@ -321,7 +349,7 @@ async function uploadToSession(
 export async function uploadPreparedAttachments(
   env: Env,
   sessionId: string,
-  prepared: PreparedImageAttachments,
+  prepared: PreparedAttachments,
   authorId: string,
   traceId?: string
 ): Promise<SlackAttachmentUploadResult> {
@@ -330,11 +358,11 @@ export async function uploadPreparedAttachments(
   );
   const references: SessionAttachmentReference[] = [];
   const dropped: SlackAttachmentDropReason[] = [...prepared.dropped];
-  const failures: Array<{ sessionMissing: boolean }> = [];
+  const failures: Array<{ sessionMissing: boolean; dropReason: SlackAttachmentDropReason }> = [];
   for (const outcome of outcomes) {
     if ("reference" in outcome) references.push(outcome.reference);
     else {
-      dropped.push("upload_rejected");
+      dropped.push(outcome.dropReason);
       failures.push(outcome);
     }
   }
@@ -347,7 +375,7 @@ export async function uploadPreparedAttachments(
 }
 
 /**
- * Tell the user how many of their attached images could not be forwarded, with
+ * Tell the user how many of their attached files could not be forwarded, with
  * guidance matched to why. Call this only once the prompt outcome is known —
  * uploads against a stale session fail spuriously and are retried against the
  * replacement session. Best effort — never blocks the message.
@@ -359,14 +387,14 @@ export async function notifyDroppedAttachments(
   result: { references: SessionAttachmentReference[]; dropped: SlackAttachmentDropReason[] },
   options: {
     traceId?: string;
-    /** True when no run started at all because every image was lost. */
+    /** True when no run started at all because every file was lost. */
     nothingSent?: boolean;
   } = {}
 ): Promise<void> {
   const { traceId, nothingSent } = options;
   const droppedCount = result.dropped.length;
   if (droppedCount <= 0) return;
-  const noun = droppedCount === 1 ? "image" : "images";
+  const noun = droppedCount === 1 ? "file" : "files";
   const pronoun = droppedCount === 1 ? "it wasn't" : "they weren't";
   const reasons = new Set(result.dropped);
   const hints: string[] = [];
@@ -375,13 +403,23 @@ export async function notifyDroppedAttachments(
       "If this keeps happening, the bot may be missing the `files:read` Slack scope — an admin can add it and reinstall the app."
     );
   }
-  if (reasons.has("too_large")) {
-    const maxMb = Math.floor(SESSION_ATTACHMENT_IMAGE_MAX_BYTES / (1024 * 1024));
-    hints.push(`Images must be ${maxMb} MB or smaller.`);
-  }
+  if (reasons.has("unsupported_format")) hints.push("Unsupported format.");
+  if (reasons.has("untrusted_url")) hints.push("Untrusted or unavailable Slack download URL.");
+  if (reasons.has("empty")) hints.push("Empty file.");
+  if (reasons.has("invalid_content"))
+    hints.push(
+      "Declared type conflicts with the contents, or the file contains invalid text or PDF data."
+    );
+  if (reasons.has("too_large"))
+    hints.push("Text files must be 2 MB or smaller; PDFs and images must be 10 MB or smaller.");
   if (reasons.has("over_cap")) {
-    hints.push(`I can forward at most ${MAX_SESSION_ATTACHMENTS_PER_MESSAGE} images per message.`);
+    hints.push(`I can forward at most ${MAX_SESSION_ATTACHMENTS_PER_MESSAGE} files per message.`);
   }
+  if (reasons.has("upload_rejected")) hints.push("The attachment upload was rejected.");
+  if (nothingSent)
+    hints.push(
+      "Accepted formats: PNG, JPEG, WebP, GIF, Markdown, TXT, CSV, TSV, and text-based PDF."
+    );
   const consequence = nothingSent
     ? "so I didn't start on this request"
     : `so ${pronoun} sent to the agent`;

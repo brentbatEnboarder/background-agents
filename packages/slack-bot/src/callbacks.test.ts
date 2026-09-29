@@ -102,6 +102,153 @@ function createDeferred<T>() {
   return { promise, resolve };
 }
 
+describe("POST /callbacks/document-warning", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const warning =
+    "Documents: skipped (2 malformed pdf). Skipped or omitted content was not analyzed.";
+  const context = {
+    source: "slack",
+    channel: "C123",
+    threadTs: "111.222",
+    repoFullName: "acme/app",
+    model: "m",
+  };
+  const data = () => ({
+    kind: "slack.document_warning",
+    sessionId: "s1",
+    messageId: "m1",
+    warning,
+    timestamp: Date.now(),
+    context,
+  });
+
+  it("posts one warning in the signed thread", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, channel: "C123", ts: "112.333" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+    const { response } = await postCallback(
+      "/callbacks/document-warning",
+      await signPayload(data())
+    );
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(slackCall(fetchMock, "chat.postMessage")?.body).toMatchObject({
+      channel: "C123",
+      thread_ts: "111.222",
+      text: warning,
+    });
+  });
+
+  it("accepts a grouped parse, image, and document warning, but does not post a replay", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(JSON.stringify({ ok: true, channel: "C123", ts: "112.333" }), { status: 200 })
+      );
+    const payload = await signPayload({
+      ...data(),
+      messageId: "grouped-warning",
+      warning:
+        "2 invalid attachment(s) were skipped. Attachment could not be fetched or exceeded its size limit. Documents: skipped (1 malformed pdf). Skipped or omitted content was not analyzed.",
+    });
+    expect((await postCallback("/callbacks/document-warning", payload)).response.status).toBe(200);
+    expect((await postCallback("/callbacks/document-warning", payload)).response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("allows retry after Slack rejects delivery", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: false, error: "unavailable" })))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true, channel: "C123", ts: "112.333" }))
+      );
+    const payload = await signPayload({ ...data(), messageId: "retry-warning" });
+    expect((await postCallback("/callbacks/document-warning", payload)).response.status).toBe(502);
+    expect((await postCallback("/callbacks/document-warning", payload)).response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps delayed warnings in the original signed channel after a newer prompt", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(JSON.stringify({ ok: true, channel: "C123", ts: "112.333" }))
+      );
+    const old = await signPayload({ ...data(), messageId: "older", context });
+    const newer = await signPayload({
+      ...data(),
+      messageId: "newer",
+      context: { ...context, channel: "C456", threadTs: "222.333" },
+    });
+    await postCallback("/callbacks/document-warning", newer);
+    await postCallback("/callbacks/document-warning", old);
+    expect(slackCall(fetchMock, "chat.postMessage")?.body).toMatchObject({
+      channel: "C456",
+      thread_ts: "222.333",
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+      channel: "C123",
+      thread_ts: "111.222",
+    });
+  });
+
+  it("rejects invalid signature, stale timestamps, wrong kind and injected warning text", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    expect(
+      (await postCallback("/callbacks/document-warning", await signPayload(data(), "wrong")))
+        .response.status
+    ).toBe(401);
+    expect(
+      (
+        await postCallback(
+          "/callbacks/document-warning",
+          await signPayload({ ...data(), timestamp: 1 })
+        )
+      ).response.status
+    ).toBe(401);
+    expect(
+      (
+        await postCallback(
+          "/callbacks/document-warning",
+          await signPayload({ ...data(), kind: "slack.activity_refresh" })
+        )
+      ).response.status
+    ).toBe(400);
+    expect(
+      (
+        await postCallback(
+          "/callbacks/document-warning",
+          await signPayload({ ...data(), warning: "<#C999>" })
+        )
+      ).response.status
+    ).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "1 invalid attachment(s) were skipped.",
+    "Attachment could not be fetched or exceeded its size limit.",
+  ])("posts a standalone safe warning: %s", async (warning) => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(JSON.stringify({ ok: true, channel: "C123", ts: "112.333" }))
+      );
+    const { response } = await postCallback(
+      "/callbacks/document-warning",
+      await signPayload({ ...data(), warning, messageId: warning })
+    );
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    vi.restoreAllMocks();
+  });
+});
+
 describe("POST /callbacks/tool_call", () => {
   afterEach(() => {
     vi.restoreAllMocks();

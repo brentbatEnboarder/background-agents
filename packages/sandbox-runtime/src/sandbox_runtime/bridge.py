@@ -30,7 +30,7 @@ from websockets.exceptions import InvalidStatus
 
 from .attachment_processor import (
     AttachmentProcessor,
-    parse_session_image_attachments,
+    parse_session_attachments,
 )
 from .constants import (
     BOOT_WARNINGS_FILE_PATH,
@@ -97,6 +97,10 @@ class SessionTerminatedError(Exception):
     a new prompt), which will trigger snapshot restoration on the control plane.
     """
 
+    pass
+
+
+class NoUsableAttachmentsError(Exception):
     pass
 
 
@@ -565,9 +569,12 @@ class AgentBridge:
                 continue
             await self._send_event({"type": "warning", **entry})
 
-    async def _send_media_warning(self, message: str) -> None:
+    async def _send_media_warning(self, message: str, message_id: str | None = None) -> None:
         """Surface non-fatal media handling failures to the user timeline."""
-        await self._send_event({"type": "warning", "scope": "media", "message": message})
+        event = {"type": "warning", "scope": "media", "message": message}
+        if message_id is not None:
+            event["messageId"] = message_id
+        await self._send_event(event)
 
     async def _send_event(self, event: dict[str, Any]) -> None:
         """Send event to control plane, buffering if WS is unavailable."""
@@ -675,21 +682,32 @@ class AgentBridge:
             prompt_author = parse_prompt_git_author(author_data)
             await self._configure_git_identity(prompt_author)
 
-            await self._ensure_agent_session()
+            session_attachments, rejected_attachments = parse_session_attachments(raw_attachments)
+            media_warnings: list[str] = []
 
-            session_attachments, rejected_attachments = parse_session_image_attachments(
-                raw_attachments
-            )
+            async def collect_warning(warning: str) -> None:
+                media_warnings.append(warning)
+
             if rejected_attachments:
                 self.log.warn(
                     "prompt.invalid_attachments",
                     message_id=message_id,
                     rejected_count=rejected_attachments,
                 )
-                await self._send_media_warning(
-                    f"{rejected_attachments} invalid attachment(s) were skipped."
+                media_warnings.append(f"{rejected_attachments} invalid attachment(s) were skipped.")
+            attachments = await self.attachment_processor.process(
+                session_attachments,
+                warn_user=collect_warning,
+            )
+            if media_warnings:
+                await self._send_media_warning(" ".join(media_warnings), message_id)
+
+            if cmd.get("attachmentOnly") is True and not attachments:
+                raise NoUsableAttachmentsError(
+                    "No usable attachments were available for this request."
                 )
-            attachments = await self.attachment_processor.process(session_attachments)
+
+            await self._ensure_agent_session()
 
             emitted_output = False
 
@@ -741,6 +759,10 @@ class AgentBridge:
             if had_error:
                 outcome = "error"
 
+        except NoUsableAttachmentsError as e:
+            outcome = "error"
+            had_error = True
+            error_message = str(e)
         except asyncio.CancelledError:
             # This top-level command boundary settles cancellation just like
             # other prompt failures, while the turn's cost is still available.

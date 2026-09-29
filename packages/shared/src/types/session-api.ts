@@ -36,6 +36,7 @@ export const slackCallbackContextSchema = z.object({
   model: z.string(),
   reasoningEffort: z.string().optional(),
   reactionMessageTs: z.string().optional(),
+  attachmentOnly: z.boolean().optional(),
   /**
    * Set when the session belongs to an automation rather than an interactive
    * request. A thread follow-up completes through the same callback as an
@@ -54,6 +55,22 @@ export type SlackCallbackContext = z.infer<typeof slackCallbackContextSchema>;
  * and the route cannot drift apart on the literal.
  */
 export const SLACK_ACTIVITY_REFRESH_KIND = "slack.activity_refresh";
+
+export const SLACK_DOCUMENT_WARNING_KIND = "slack.document_warning";
+// Only processor-generated, aggregate categories may leave the timeline. No file names or text.
+const documentReason =
+  "(?:aggregate character limit|character limit|download failed or size limit|encrypted pdf|extraction failed|extraction limit|extraction timeout|invalid csv|invalid signature|invalid text|malformed pdf|page limit|row limit|textless pdf)";
+const documentWarning = `Documents: (?:skipped \\(\\d+ ${documentReason}(?:, \\d+ ${documentReason})*\\)(?:; truncated \\(\\d+ ${documentReason}(?:, \\d+ ${documentReason})*\\))?|truncated \\(\\d+ ${documentReason}(?:, \\d+ ${documentReason})*\\))\\. Skipped or omitted content was not analyzed\\.`;
+const invalidWarning = `\\d+ invalid attachment\\(s\\) were skipped\\.`;
+const imageWarning = `Attachment could not be fetched or exceeded its size limit\\.`;
+export const slackDocumentWarningSchema = z
+  .string()
+  .max(500)
+  .regex(
+    new RegExp(
+      `^(?:${invalidWarning}(?: ${imageWarning})?(?: ${documentWarning})?|${imageWarning}(?: ${documentWarning})?|${documentWarning})$`
+    )
+  );
 
 const linearCallbackContextBaseSchema = z.strictObject({
   source: z.literal("linear"),

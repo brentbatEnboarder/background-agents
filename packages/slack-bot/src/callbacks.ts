@@ -2,9 +2,13 @@
  * Callback handlers for control-plane notifications.
  */
 
-import { postEphemeral } from "@open-inspect/shared/slack";
+import { postEphemeral, postMessage } from "@open-inspect/shared/slack";
 import { verifyCallbackFromControlPlane } from "@open-inspect/shared/auth";
-import { SLACK_ACTIVITY_REFRESH_KIND } from "@open-inspect/shared/types/session-api";
+import {
+  SLACK_ACTIVITY_REFRESH_KIND,
+  SLACK_DOCUMENT_WARNING_KIND,
+  slackDocumentWarningSchema,
+} from "@open-inspect/shared/types/session-api";
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import type { Env } from "./types";
@@ -25,6 +29,8 @@ const log = createLogger("callback");
  * one can replay to a single extra display period.
  */
 const ACTIVITY_CALLBACK_MAX_AGE_MS = 2 * 60 * 1000;
+// Per-isolate replay guard. Never use KV get/put as a claim: it is not atomic.
+const deliveredWarnings = new Map<string, number>();
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -71,6 +77,16 @@ const activityCallbackSchema = z.looseObject({
   kind: z.literal(SLACK_ACTIVITY_REFRESH_KIND),
   sessionId: z.string(),
   messageId: z.string(),
+  timestamp: z.number(),
+  signature: z.string(),
+  context: slackCallbackContextSchema,
+});
+
+const documentWarningCallbackSchema = z.looseObject({
+  kind: z.literal(SLACK_DOCUMENT_WARNING_KIND),
+  sessionId: z.string(),
+  messageId: z.string(),
+  warning: slackDocumentWarningSchema,
   timestamp: z.number(),
   signature: z.string(),
   context: slackCallbackContextSchema,
@@ -208,6 +224,55 @@ async function enqueueCompletion(
 }
 
 export const callbacksRouter = new Hono<{ Bindings: Env }>();
+
+callbacksRouter.post("/document-warning", async (c) => {
+  const startTime = Date.now();
+  const traceId = c.req.header("x-trace-id") || crypto.randomUUID();
+  let payload: unknown;
+  try {
+    payload = await c.req.json();
+  } catch {
+    return rejectInvalidPayload(c, "/callbacks/document-warning", traceId, startTime);
+  }
+  const parsed = documentWarningCallbackSchema.safeParse(payload);
+  if (!parsed.success || !isSignedCallbackPayload(payload)) {
+    return rejectInvalidPayload(c, "/callbacks/document-warning", traceId, startTime);
+  }
+  const rejection = await rejectInvalidCallback(c, payload, {
+    path: "/callbacks/document-warning",
+    traceId,
+    startTime,
+  });
+  if (rejection) return rejection;
+  if (Math.abs(startTime - parsed.data.timestamp) > ACTIVITY_CALLBACK_MAX_AGE_MS) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+  const { channel, threadTs } = parsed.data.context;
+  if (!channel || !threadTs) return c.json({ error: "invalid payload" }, 400);
+  for (const [key, expires] of deliveredWarnings) {
+    if (expires <= startTime) deliveredWarnings.delete(key);
+  }
+  const deliveryKey = `${parsed.data.sessionId}:${parsed.data.messageId}`;
+  if (deliveredWarnings.has(deliveryKey)) return c.json({ ok: true });
+  if (deliveredWarnings.size >= 1000)
+    deliveredWarnings.delete(deliveredWarnings.keys().next().value!);
+  deliveredWarnings.set(deliveryKey, startTime + ACTIVITY_CALLBACK_MAX_AGE_MS);
+  try {
+    const result = await postMessage(c.env.SLACK_BOT_TOKEN, channel, parsed.data.warning, {
+      thread_ts: threadTs,
+    });
+    if (!result.ok) {
+      deliveredWarnings.delete(deliveryKey);
+      log.warn("callback.document_warning", { trace_id: traceId, slack_error: result.error });
+      return c.json({ error: "slack delivery failed" }, 502);
+    }
+  } catch {
+    deliveredWarnings.delete(deliveryKey);
+    log.warn("callback.document_warning", { trace_id: traceId, outcome: "error" });
+    return c.json({ error: "slack delivery failed" }, 502);
+  }
+  return c.json({ ok: true });
+});
 
 /**
  * Callback endpoint for session completion notifications.

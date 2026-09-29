@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { admit } from "../routing/admit";
 import type { ControlPlaneHonoEnv } from "../routing/hono-env";
 /**
- * Session image attachments added through the chat composer.
+ * Session attachments uploaded by authorized producers.
  *
  * POST stores the file in the media bucket keyed by an unguessable attachment id;
  * the prompt then references it as `{ attachmentId, name }` so the message row and
@@ -22,16 +22,16 @@ import type { ControlPlaneHonoEnv } from "../routing/hono-env";
 import { readBodyCapped } from "@open-inspect/shared/http-body";
 import {
   sessionAttachmentIdSchema,
+  sessionAttachmentMaxBytes,
   type SessionAttachmentUploadResponse,
 } from "@open-inspect/shared/types/session-attachments";
 import { generateId } from "../auth/crypto";
 import { createLogger } from "../logger";
 import {
   buildSessionAttachmentObjectKey,
-  detectSessionAttachmentFileType,
+  validateSessionAttachmentContent,
   isMultipartFile,
   isSupportedSessionAttachmentMimeType,
-  SESSION_ATTACHMENT_IMAGE_MAX_BYTES,
   SESSION_ATTACHMENT_MAX_REQUEST_BYTES,
   sessionAttachmentRequestExceedsLimit,
 } from "../media";
@@ -113,26 +113,30 @@ export async function handleAttachmentPost(
     return error("Uploaded file is empty", 400);
   }
 
-  if (fileEntry.type && !isSupportedSessionAttachmentMimeType(fileEntry.type)) {
+  const declaredType = fileEntry.type;
+  if (declaredType && !isSupportedSessionAttachmentMimeType(declaredType)) {
     return error("Unsupported attachment MIME type", 400);
   }
 
-  if (fileEntry.size > SESSION_ATTACHMENT_IMAGE_MAX_BYTES) {
-    return error(`Images must be ${SESSION_ATTACHMENT_IMAGE_MAX_BYTES} bytes or smaller`, 400);
+  if (
+    declaredType &&
+    isSupportedSessionAttachmentMimeType(declaredType) &&
+    fileEntry.size > sessionAttachmentMaxBytes(declaredType)
+  ) {
+    return error("Attachment exceeds the source byte limit for its type", 400);
   }
 
   const bytes = new Uint8Array(await fileEntry.arrayBuffer());
-  const detected = detectSessionAttachmentFileType(bytes);
+  const detected = validateSessionAttachmentContent(
+    bytes,
+    declaredType && isSupportedSessionAttachmentMimeType(declaredType) ? declaredType : null
+  );
   if (!detected) {
-    return error("Uploaded file is not a supported image format", 400);
+    return error("Uploaded file contents do not match a supported attachment type", 400);
   }
 
-  if (bytes.byteLength > SESSION_ATTACHMENT_IMAGE_MAX_BYTES) {
-    return error(`Images must be ${SESSION_ATTACHMENT_IMAGE_MAX_BYTES} bytes or smaller`, 400);
-  }
-
-  if (fileEntry.type && fileEntry.type !== detected.mimeType) {
-    return error("Uploaded file MIME type does not match file contents", 400);
+  if (bytes.byteLength > sessionAttachmentMaxBytes(detected.mimeType)) {
+    return error("Attachment exceeds the source byte limit for its type", 400);
   }
 
   const attachmentId = generateId();
@@ -166,6 +170,7 @@ export async function handleAttachmentPost(
     session_id: sessionId,
     attachment_id: attachmentId,
     mime_type: detected.mimeType,
+    kind: detected.kind,
     size_bytes: bytes.byteLength,
     request_id: ctx.request_id,
     trace_id: ctx.trace_id,
@@ -225,7 +230,6 @@ export async function handleAttachmentGet(
     logger.error("attachments.invalid_metadata", {
       session_id: sessionId,
       attachment_id: attachmentId,
-      content_type: contentType,
       request_id: ctx.request_id,
       trace_id: ctx.trace_id,
     });

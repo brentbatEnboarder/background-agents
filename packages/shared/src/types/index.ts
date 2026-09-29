@@ -9,6 +9,11 @@ export {
   MAX_SESSION_ATTACHMENTS_PER_MESSAGE,
   SESSION_ATTACHMENT_IMAGE_MIME_TYPES,
   SESSION_ATTACHMENT_IMAGE_MAX_BYTES,
+  SESSION_ATTACHMENT_TEXT_MAX_BYTES,
+  SESSION_ATTACHMENT_PDF_MAX_BYTES,
+  SESSION_ATTACHMENT_DOCUMENT_MIME_TYPES,
+  sessionAttachmentKind,
+  sessionAttachmentMaxBytes,
   sessionAttachmentMimeTypeSchema,
   sessionAttachmentIdSchema,
   sessionAttachmentReferenceSchema,
@@ -19,6 +24,7 @@ export {
 } from "./session-attachments";
 export type {
   SessionAttachmentMimeType,
+  SessionAttachmentKind,
   SessionAttachmentReference,
   ResolvedSessionAttachment,
   SessionAttachmentUploadResponse,

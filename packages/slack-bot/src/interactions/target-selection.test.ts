@@ -115,13 +115,15 @@ describe("handleTargetSelection", () => {
           senderLabel: "Ajan (U123)",
           displayName: "Ajan",
         },
-        images: [
+        files: [
           {
-            id: "F1",
-            name: "screenshot.png",
-            mimetype: "image/png",
-            size: 16,
-            downloadUrl: "https://files.slack.com/files-pri/T1-F1/screenshot.png",
+            attachment: {
+              id: "F1",
+              name: "screenshot.png",
+              mimetype: "image/png",
+              size: 16,
+              downloadUrl: "https://files.slack.com/files-pri/T1-F1/screenshot.png",
+            },
           },
         ],
       })
@@ -149,7 +151,7 @@ describe("handleTargetSelection", () => {
     expect(getMessageDetails).not.toHaveBeenCalled();
     expect(startSessionAndSendPrompt).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ messageText: "Fix the deploy", images: [] })
+      expect.objectContaining({ messageText: "Fix the deploy", files: [] })
     );
   });
 
@@ -175,7 +177,10 @@ describe("handleTargetSelection", () => {
     expect(getMessageDetails).toHaveBeenCalledWith("xoxb-test", "C123", "111.222", "100.000");
     expect(startSessionAndSendPrompt).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ messageText: "Fix what's in the screenshot", images: [] })
+      expect.objectContaining({
+        messageText: "Fix what's in the screenshot",
+        files: [{ dropReason: "download_failed" }],
+      })
     );
   });
 
@@ -204,7 +209,38 @@ describe("handleTargetSelection", () => {
     expect(vi.mocked(postMessage)).toHaveBeenCalledWith(
       "xoxb-test",
       "C123",
-      expect.stringContaining("couldn't retrieve the attached image(s)"),
+      expect.stringContaining("couldn't retrieve the attached file(s)"),
+      { thread_ts: "111.222" }
+    );
+  });
+
+  it("does not launch a deferred file-only request when the re-fetched file is unsupported", async () => {
+    vi.mocked(getPendingRequest).mockResolvedValue({
+      message: "See the attached file(s).",
+      userId: "U123",
+      attachmentOnly: true,
+      sourceMessage: { ts: "111.222" },
+    });
+    vi.mocked(getMessageDetails).mockResolvedValue({
+      ok: true,
+      files: [{ id: "F2", name: "data.xlsx", mimetype: "application/octet-stream" }],
+      attachments: [],
+    });
+    await handleTargetSelection(
+      "acme/app",
+      "C123",
+      "111.222",
+      undefined,
+      "U123",
+      makeEnv(),
+      "trace-1",
+      vi.fn()
+    );
+    expect(startSessionAndSendPrompt).not.toHaveBeenCalled();
+    expect(postMessage).toHaveBeenCalledWith(
+      "xoxb-test",
+      "C123",
+      expect.stringContaining("Unsupported format"),
       { thread_ts: "111.222" }
     );
   });
