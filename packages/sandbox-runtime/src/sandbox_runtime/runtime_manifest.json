@@ -1,9 +1,9 @@
 {
-  "runtimeVersion": "v66-stakeholder-memory",
-  "generation": 66,
-  "minimumCompatibleGeneration": 62,
-  "minimumRebuildGeneration": 66,
+  "runtimeVersion": "v67-document-attachments",
+  "generation": 67,
+  "minimumCompatibleGeneration": 67,
+  "minimumRebuildGeneration": 67,
   "harnessMinimumGeneration": {
-    "claude": 64
+    "claude": 67
   }
 }

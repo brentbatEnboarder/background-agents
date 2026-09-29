@@ -36,6 +36,13 @@ describe("evaluateImageBuildRebuildPolicy", () => {
   });
 
   it("rebuilds for a missing fingerprint, incompatible runtime, or malformed provenance", () => {
+    expect(
+      evaluateImageBuildRebuildPolicy(
+        unit,
+        [row({ runtimeVersion: "v66-stakeholder-memory" })],
+        "modal"
+      )
+    ).toMatchObject({ type: "rebuild", reason: "runtime_incompatible" });
     expect(evaluateImageBuildRebuildPolicy(unit, [], "modal")).toMatchObject({
       type: "rebuild",
       reason: "missing_image",

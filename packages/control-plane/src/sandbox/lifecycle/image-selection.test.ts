@@ -89,6 +89,17 @@ describe("evaluateImageBuildForSpawn", () => {
   });
 
   it("enforces the runtime compatibility floor", async () => {
+    // Documents require the new sandbox parser even when the repository image is otherwise ready.
+    expect(
+      await evaluateImageBuildForSpawn(
+        await readyImage({ runtime_version: "v66-stakeholder-memory" }),
+        SESSION_REPOSITORIES
+      )
+    ).toEqual({
+      outcome: "miss",
+      reason: "runtime_below_floor",
+      imageBuildId: "imgb-1",
+    });
     expect(
       (
         await evaluateImageBuildForSpawn(
@@ -115,12 +126,10 @@ describe("evaluateImageBuildForSpawn", () => {
     }
   });
 
-  it("applies the session harness's own floor without raising everyone else's", async () => {
-    // The Claude harness arrived after the global floor: its sessions skip
-    // images from before it, while OpenCode sessions keep using them.
+  it("applies the document runtime floor to both harnesses", async () => {
     const claudeFloor = minCompatibleRuntimeVersionFor("claude");
-    expect(claudeFloor).toBeGreaterThan(MIN_COMPATIBLE_RUNTIME_VERSION);
-    const image = await readyImage({ runtime_version: `v${claudeFloor - 1}-before-claude` });
+    expect(claudeFloor).toBe(MIN_COMPATIBLE_RUNTIME_VERSION);
+    const image = await readyImage({ runtime_version: "v66-stakeholder-memory" });
 
     expect(await evaluateImageBuildForSpawn(image, SESSION_REPOSITORIES, "claude")).toEqual({
       outcome: "miss",
@@ -129,7 +138,7 @@ describe("evaluateImageBuildForSpawn", () => {
     });
     expect(
       (await evaluateImageBuildForSpawn(image, SESSION_REPOSITORIES, "opencode")).outcome
-    ).toBe("selected");
+    ).toBe("miss");
     const current = await readyImage({ runtime_version: `v${claudeFloor}-claude` });
     expect(
       (await evaluateImageBuildForSpawn(current, SESSION_REPOSITORIES, "claude")).outcome
