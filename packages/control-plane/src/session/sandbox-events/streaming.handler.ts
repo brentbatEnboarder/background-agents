@@ -85,5 +85,18 @@ export class SandboxStreamingEventHandler {
   recordTimelineEvent(event: SandboxEvent, context: SandboxEventContext): void {
     persistSandboxEvent(this.eventRepository, event, context);
     this.messenger.broadcast({ type: "sandbox_event", event });
+    if (
+      event.type === "warning" &&
+      event.scope === "media" &&
+      context.processingMessage?.id === context.messageId &&
+      "messageId" in event &&
+      event.messageId === context.messageId
+    ) {
+      const messageId = context.messageId;
+      this.backgroundTasks.submit(
+        () => this.callbackService.notifyDocumentWarning(messageId, event.message),
+        { name: "callback.document_warning", context: { message_id: messageId } }
+      );
+    }
   }
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   parseStoredSessionAttachments,
   resolveSessionAttachments,
@@ -41,5 +41,36 @@ describe("parseStoredSessionAttachments", () => {
     expect(parseStoredSessionAttachments(JSON.stringify(resolved?.attachments))).toEqual(
       resolved?.attachments
     );
+  });
+  it("reads mixed legacy images and new documents without discarding either", () => {
+    expect(
+      parseStoredSessionAttachments(
+        JSON.stringify([
+          { attachmentId: "att-1", name: "shot.png", mimeType: "image/png" },
+          {
+            attachmentId: "att-2",
+            name: "report.pdf",
+            mimeType: "application/pdf",
+            kind: "document",
+          },
+        ])
+      )
+    ).toEqual([
+      { attachmentId: "att-1", name: "shot.png", mimeType: "image/png", kind: "image" },
+      { attachmentId: "att-2", name: "report.pdf", mimeType: "application/pdf", kind: "document" },
+    ]);
+  });
+  it("rejects unmarked documents rather than partially reading an array", () => {
+    const onInvalid = vi.fn();
+    expect(
+      parseStoredSessionAttachments(
+        JSON.stringify([
+          { attachmentId: "att-1", name: "shot.png", mimeType: "image/png" },
+          { attachmentId: "att-2", name: "report.pdf", mimeType: "application/pdf" },
+        ]),
+        onInvalid
+      )
+    ).toBeUndefined();
+    expect(onInvalid).toHaveBeenCalledOnce();
   });
 });

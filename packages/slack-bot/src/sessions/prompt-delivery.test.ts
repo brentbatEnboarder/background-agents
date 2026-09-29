@@ -46,6 +46,32 @@ beforeEach(() => {
 });
 
 describe("deliverPrompt", () => {
+  it("carries file-only intent with the originating Slack callback context", async () => {
+    vi.mocked(uploadPreparedAttachments).mockResolvedValue({
+      references: [{ attachmentId: "att-1", name: "file.pdf" }],
+      dropped: [],
+      sessionMissing: false,
+    });
+    await deliverPrompt(
+      env,
+      options({
+        attachmentOnly: true,
+        callbackContext: {
+          source: "slack",
+          channel: "C123",
+          threadTs: "111.222",
+          repoFullName: "a/b",
+          model: "m",
+        },
+      })
+    );
+    expect(sendPrompt).toHaveBeenCalledWith(
+      env,
+      expect.objectContaining({
+        callbackContext: expect.objectContaining({ attachmentOnly: true }),
+      })
+    );
+  });
   it("uploads attachments, sends the prompt with references, then notifies drops", async () => {
     vi.mocked(uploadPreparedAttachments).mockResolvedValue({
       references: [{ attachmentId: "att-1", name: "screenshot.png" }],

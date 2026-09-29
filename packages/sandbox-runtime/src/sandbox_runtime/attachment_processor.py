@@ -123,7 +123,9 @@ class AttachmentProcessor:
         self._semaphore = asyncio.Semaphore(self.MAX_CONCURRENCY)
 
     async def process(
-        self, attachments: list[ResolvedSessionAttachment] | None
+        self,
+        attachments: list[ResolvedSessionAttachment] | None,
+        warn_user: Callable[[str], Awaitable[None]] | None = None,
     ) -> list[HydratedSessionAttachment] | None:
         if attachments is None:
             return None
@@ -139,7 +141,10 @@ class AttachmentProcessor:
         output: list[HydratedSessionAttachment] = []
         skipped: dict[str, int] = {}
         truncated: dict[str, int] = {}
-        for result, failure in results:
+        image_failures = 0
+        for attachment, (result, failure) in zip(attachments, results, strict=True):
+            if result is None and attachment["kind"] == "image":
+                image_failures += 1
             if failure:
                 skipped[failure] = skipped.get(failure, 0) + 1
             if result is None:
@@ -187,6 +192,10 @@ class AttachmentProcessor:
                     category = reason if reason in TRUNCATION_REASONS else "extraction limit"
                     truncated[category] = truncated.get(category, 0) + 1
             output.append(result)
+        if image_failures:
+            await (warn_user or self.warn_user)(
+                "Attachment could not be fetched or exceeded its size limit."
+            )
         if skipped or truncated:
             details = []
             if skipped:
@@ -197,7 +206,7 @@ class AttachmentProcessor:
                 details.append(
                     f"truncated ({', '.join(f'{count} {reason}' for reason, count in sorted(truncated.items()))})"
                 )
-            await self.warn_user(
+            await (warn_user or self.warn_user)(
                 f"Documents: {'; '.join(details)}. Skipped or omitted content was not analyzed."
             )
         return output
@@ -218,7 +227,6 @@ class AttachmentProcessor:
         if data is None:
             self.log.warn("attachments.fetch_failed", attachment_id=attachment_id)
             if attachment["kind"] == "image":
-                await self.warn_user("Attachment could not be fetched or exceeded its size limit.")
                 return None, None
             return None, "download failed or size limit"
         if attachment["kind"] == "image":

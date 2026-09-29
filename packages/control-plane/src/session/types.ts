@@ -215,6 +215,7 @@ interface PromptCommand {
     gitIdentity: PromptGitIdentity;
   };
   attachments?: ResolvedSessionAttachment[];
+  attachmentOnly?: boolean;
 }
 
 interface StopCommand {

@@ -65,6 +65,7 @@ function createProcessor() {
 
   const callbackService = {
     notifyToolCall: vi.fn(async () => {}),
+    notifyDocumentWarning: vi.fn(async () => {}),
     notifyComplete: vi.fn(async () => {}),
   };
 
@@ -183,6 +184,24 @@ function createProcessor() {
 }
 
 describe("SessionSandboxEventProcessor", () => {
+  it("routes only current, attributed media warnings to document delivery", async () => {
+    const h = createProcessor();
+    h.repository.getProcessingMessage.mockReturnValue({ id: "msg-1" });
+    const warning = {
+      type: "warning" as const,
+      scope: "media" as const,
+      messageId: "msg-1",
+      message: "Documents: skipped (2 malformed pdf). Skipped or omitted content was not analyzed.",
+      timestamp: 1,
+    };
+    await h.processor.processSandboxEvent(warning);
+    await h.backgroundTasks.settle();
+    expect(h.callbackService.notifyDocumentWarning).toHaveBeenCalledOnce();
+    expect(h.callbackService.notifyDocumentWarning).toHaveBeenCalledWith("msg-1", warning.message);
+    await h.processor.processSandboxEvent({ ...warning, messageId: "msg-old" });
+    await h.processor.processSandboxEvent({ ...warning, scope: "setup" });
+    expect(h.callbackService.notifyDocumentWarning).toHaveBeenCalledOnce();
+  });
   it("releases the next prompt without waiting for diff work", async () => {
     const h = createProcessor();
     h.repository.getProcessingMessage.mockReturnValue({ id: "msg-1" });

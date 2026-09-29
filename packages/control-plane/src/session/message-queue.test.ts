@@ -948,7 +948,7 @@ describe("SessionMessageQueue", () => {
     expect(h.repository.createMessageWithAttachments).toHaveBeenCalledWith(
       expect.objectContaining({
         attachments: JSON.stringify([
-          { name: "shot.png", attachmentId: "up-1", mimeType: "image/png", kind: "image" },
+          { name: "shot.png", attachmentId: "up-1", mimeType: "image/png" },
         ]),
       }),
       ["up-1"]
@@ -1253,6 +1253,36 @@ describe("SessionMessageQueue", () => {
       type: "prompt_queue_updated",
       promptQueue: expect.any(Array),
     });
+  });
+
+  it("dispatches file-only intent from the persisted Slack message, not its placeholder text", async () => {
+    const h = buildQueue();
+    const sandboxWs = { readyState: 1 } as WebSocket;
+    h.repository.getNextPendingMessage.mockReturnValue(
+      createMessage({
+        id: "file-only",
+        source: "slack",
+        content: "Please analyze the attached file.",
+        callback_context: JSON.stringify({
+          source: "slack",
+          channel: "C1",
+          threadTs: "1.2",
+          attachmentOnly: true,
+        }),
+      })
+    );
+    h.wsManager.getSandboxSocket.mockReturnValue(sandboxWs);
+
+    await h.queue.processMessageQueue();
+
+    expect(h.wsManager.send).toHaveBeenCalledWith(
+      sandboxWs,
+      expect.objectContaining({
+        type: "prompt",
+        messageId: "file-only",
+        attachmentOnly: true,
+      })
+    );
   });
 
   it("leaves the prompt pending and timeline untouched when sandbox send fails", async () => {

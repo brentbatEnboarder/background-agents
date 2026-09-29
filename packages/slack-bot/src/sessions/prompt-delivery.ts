@@ -78,7 +78,10 @@ export async function deliverPrompt(
     sessionId,
     content,
     authorId,
-    callbackContext,
+    callbackContext:
+      callbackContext?.source === "slack"
+        ? { ...callbackContext, attachmentOnly }
+        : callbackContext,
     attachments: upload.references,
     traceId,
   });

@@ -255,15 +255,86 @@ describe("POST /internal/prompt", () => {
 
     expect(messages[0].attachments).not.toBeNull();
     const parsed = JSON.parse(messages[0].attachments);
-    expect(parsed).toEqual([
-      { name: "screenshot.png", attachmentId, mimeType: "image/png", kind: "image" },
-    ]);
+    expect(parsed).toEqual([{ name: "screenshot.png", attachmentId, mimeType: "image/png" }]);
     const attachments = await queryDO<{ message_id: string }>(
       stub,
       "SELECT message_id FROM attachments WHERE id = ?",
       attachmentId
     );
     expect(attachments).toEqual([{ message_id: messageId }]);
+  });
+
+  it("persists old-shape images alongside documents and delivers both to the sandbox", async () => {
+    const name = `prompt-attachments-${Date.now()}`;
+    const { stub } = await initNamedSession(name);
+    await seedSandboxAuth(stub, { authToken: SANDBOX_TOKEN, sandboxId: SANDBOX_ID });
+    const { ws } = await openSandboxWs(name, {
+      authToken: SANDBOX_TOKEN,
+      sandboxId: SANDBOX_ID,
+    });
+    expect(ws).not.toBeNull();
+    ws!.accept();
+    const sandboxMessages = collectMessages(ws!, { timeoutMs: 500 });
+
+    for (const [attachmentId, mimeType] of [
+      ["image-1", "image/png"],
+      ["document-1", "application/pdf"],
+    ]) {
+      const upload = await stub.fetch("http://internal/internal/attachments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "record", attachmentId, mimeType, sizeBytes: 1024 }),
+      });
+      expect(upload.status).toBe(200);
+    }
+
+    const response = await stub.fetch("http://internal/internal/prompt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        content: "Analyze these",
+        authorId: "user-1",
+        source: "web",
+        attachments: [
+          { name: "shot.png", attachmentId: "image-1" },
+          { name: "report.pdf", attachmentId: "document-1" },
+        ],
+      }),
+    });
+    expect(response.status).toBe(200);
+    const { messageId } = await response.json<{ messageId: string }>();
+    const rows = await queryDO<{ attachments: string }>(
+      stub,
+      "SELECT attachments FROM messages WHERE id = ?",
+      messageId
+    );
+    expect(JSON.parse(rows[0].attachments)).toEqual([
+      { name: "shot.png", attachmentId: "image-1", mimeType: "image/png" },
+      {
+        name: "report.pdf",
+        attachmentId: "document-1",
+        mimeType: "application/pdf",
+        kind: "document",
+      },
+    ]);
+    const resolved = [
+      { name: "shot.png", attachmentId: "image-1", mimeType: "image/png", kind: "image" },
+      {
+        name: "report.pdf",
+        attachmentId: "document-1",
+        mimeType: "application/pdf",
+        kind: "document",
+      },
+    ];
+    expect(
+      (await sandboxMessages).find((message) => message.type === "prompt")?.attachments
+    ).toEqual(resolved);
+    const list = await stub.fetch("http://internal/internal/messages");
+    expect(list.status).toBe(200);
+    expect(
+      (await list.json<{ messages: { attachments: unknown }[] }>()).messages[0]?.attachments
+    ).toEqual(resolved);
+    ws!.close();
   });
 
   it("stores callback_context for Slack", async () => {

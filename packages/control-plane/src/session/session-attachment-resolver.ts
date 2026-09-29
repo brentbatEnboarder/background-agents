@@ -1,5 +1,5 @@
 import {
-  resolvedSessionAttachmentsSchema,
+  resolvedSessionAttachmentSchema,
   sessionAttachmentMimeTypeSchema,
   sessionAttachmentKind,
   sessionAttachmentReferenceSchema,
@@ -27,22 +27,20 @@ export function parseStoredSessionAttachments(
   if (!value) return undefined;
   try {
     const stored: unknown = JSON.parse(value);
-    const parsed = resolvedSessionAttachmentsSchema.safeParse(stored);
-    if (parsed.success) return parsed.data.length > 0 ? parsed.data : undefined;
-    // Images already persisted before resolved metadata gained kind remain readable.
-    const legacyImages = z
+    // Images keep the predecessor's on-disk shape; documents require the new kind marker.
+    const parsed = z
       .array(
-        sessionAttachmentReferenceSchema
-          .extend({
-            mimeType: z.enum(SESSION_ATTACHMENT_IMAGE_MIME_TYPES),
-          })
-          .strict()
+        z.union([
+          resolvedSessionAttachmentSchema,
+          sessionAttachmentReferenceSchema
+            .extend({ mimeType: z.enum(SESSION_ATTACHMENT_IMAGE_MIME_TYPES) })
+            .strict()
+            .transform((attachment) => ({ ...attachment, kind: "image" as const })),
+        ])
       )
       .max(MAX_SESSION_ATTACHMENTS_PER_MESSAGE)
       .safeParse(stored);
-    if (legacyImages.success) {
-      return legacyImages.data.map((attachment) => ({ ...attachment, kind: "image" as const }));
-    }
+    if (parsed.success) return parsed.data.length > 0 ? parsed.data : undefined;
   } catch {
     // Report malformed JSON through the same callback as invalid attachment metadata.
   }
