@@ -1,6 +1,6 @@
 import { publishAppHome } from "../app-home";
 import { isDmDispatchable } from "../dm-utils";
-import { admitSlackEvent } from "../ingress-policy";
+import { admitSlackEvent, resolveIngressBindings } from "../ingress-policy";
 import type { BackgroundTaskScheduler } from "../messages/blocks";
 import type { Env } from "../types";
 import { handleAppMention, handleDirectMessage, handleThreadContinuation } from "./message-handler";
@@ -19,7 +19,7 @@ export async function handleSlackEvent(
   traceId: string | undefined,
   scheduleBackground: BackgroundTaskScheduler
 ): Promise<void> {
-  const admission = admitSlackEvent(payload, env);
+  const admission = admitSlackEvent(payload, await resolveIngressBindings(env));
   if (!admission.admitted) {
     if (admission.reason === "user_not_allowed") {
       await replyToUnauthorizedUser(payload, env, traceId);
