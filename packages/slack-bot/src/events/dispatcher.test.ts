@@ -2,15 +2,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../types";
 import type { SlackEventPayload } from "./payload";
 
-const { mockPublishAppHome, mockHandleAppMention, mockHandleDirectMessage, mockContinuation } =
-  vi.hoisted(() => ({
-    mockPublishAppHome: vi.fn(),
-    mockHandleAppMention: vi.fn(),
-    mockHandleDirectMessage: vi.fn(),
-    mockContinuation: vi.fn(),
-  }));
+const {
+  mockPublishAppHome,
+  mockHandleAppMention,
+  mockHandleDirectMessage,
+  mockContinuation,
+  mockUnauthorizedReply,
+} = vi.hoisted(() => ({
+  mockPublishAppHome: vi.fn(),
+  mockHandleAppMention: vi.fn(),
+  mockHandleDirectMessage: vi.fn(),
+  mockContinuation: vi.fn(),
+  mockUnauthorizedReply: vi.fn(),
+}));
 
 vi.mock("../app-home", () => ({ publishAppHome: mockPublishAppHome }));
+vi.mock("./unauthorized-reply", () => ({ replyToUnauthorizedUser: mockUnauthorizedReply }));
 vi.mock("./message-handler", () => ({
   handleAppMention: mockHandleAppMention,
   handleDirectMessage: mockHandleDirectMessage,
@@ -38,6 +45,35 @@ function payload(event: SlackEventPayload["event"]): SlackEventPayload {
 
 describe("handleSlackEvent", () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it("offers the fixed reply only to a user the allowlist rejects", async () => {
+    const rejected = payload({
+      type: "app_mention",
+      text: "<@U999> hello",
+      user: "U999",
+      channel: "C123",
+      ts: "1.1",
+    });
+    await handleSlackEvent(rejected, env, "trace-u", scheduleBackground);
+    expect(mockUnauthorizedReply).toHaveBeenCalledWith(rejected, env, "trace-u");
+    expect(mockHandleAppMention).not.toHaveBeenCalled();
+
+    mockUnauthorizedReply.mockClear();
+    await handleSlackEvent({ ...rejected, team_id: "T999" }, env, undefined, scheduleBackground);
+    await handleSlackEvent(
+      payload({ type: "app_mention", text: "hi", user: "U123", channel: "C999", ts: "1.2" }),
+      env,
+      undefined,
+      scheduleBackground
+    );
+    await handleSlackEvent(
+      payload({ type: "message", bot_id: "B1", user: "U999", channel: "D1", ts: "1.3" }),
+      env,
+      undefined,
+      scheduleBackground
+    );
+    expect(mockUnauthorizedReply).not.toHaveBeenCalled();
+  });
 
   it("routes an authorized ordinary channel reply only to continuation", async () => {
     await handleSlackEvent(

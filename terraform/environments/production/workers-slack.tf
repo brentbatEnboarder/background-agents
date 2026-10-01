@@ -76,6 +76,7 @@ module "slack_bot_worker" {
       { name = "SLACK_TEAM_ID", value = var.slack_team_id },
       { name = "SLACK_ALLOWED_USER_IDS", value = var.slack_allowed_user_ids },
       { name = "SLACK_ALLOWED_CHANNEL_IDS", value = var.slack_allowed_channel_ids },
+      { name = "SLACK_UNAUTHORIZED_REPLY", value = var.slack_unauthorized_reply },
     ],
     var.slack_default_environment_id != null ? [
       { name = "SLACK_DEFAULT_ENVIRONMENT_ID", value = var.slack_default_environment_id },
