@@ -23,13 +23,20 @@ import { eventRoutes } from "./events";
 const EVENT_ID = "Ev-kv-unavailable";
 
 function makeEnv(kvOperation: "get" | "put"): Env {
+  const unavailable = () => Object.assign(new Error("KV unavailable"), { code: "KV_UNAVAILABLE" });
+  // Ingress also reads the KV allowlist; only dedupe reads (`event:` keys) simulate the outage.
+  let failNextDedupeGet = kvOperation === "get";
   const kv = {
-    get: vi.fn().mockResolvedValue(null),
+    get: vi.fn(async (key: string) => {
+      if (key.startsWith("event:") && failNextDedupeGet) {
+        failNextDedupeGet = false;
+        throw unavailable();
+      }
+      return null;
+    }),
     put: vi.fn().mockResolvedValue(undefined),
   };
-  kv[kvOperation].mockRejectedValueOnce(
-    Object.assign(new Error("KV unavailable"), { code: "KV_UNAVAILABLE" })
-  );
+  if (kvOperation === "put") kv.put.mockRejectedValueOnce(unavailable());
   return {
     SLACK_KV: kv,
     SLACK_APP_ID: "A123",
@@ -37,6 +44,10 @@ function makeEnv(kvOperation: "get" | "put"): Env {
     SLACK_ALLOWED_USER_IDS: "U123,U456",
     SLACK_ALLOWED_CHANNEL_IDS: "C123",
   } as unknown as Env;
+}
+
+function dedupeReads(env: Env): unknown[][] {
+  return (env.SLACK_KV as any).get.mock.calls.filter(([key]: [string]) => key.startsWith("event:"));
 }
 
 function eventRequest(): Request {
@@ -236,7 +247,7 @@ describe("POST /events deduplication", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true });
-    expect((env.SLACK_KV as any).get).not.toHaveBeenCalled();
+    expect(dedupeReads(env)).toEqual([]);
     expect(mockHandleSlackEvent).not.toHaveBeenCalled();
   });
 
@@ -257,7 +268,7 @@ describe("POST /events deduplication", () => {
     );
 
     expect(response.status).toBe(200);
-    expect((env.SLACK_KV as any).get).not.toHaveBeenCalled();
+    expect(dedupeReads(env)).toEqual([]);
     expect(mockHandleSlackEvent).not.toHaveBeenCalled();
   });
 
@@ -290,7 +301,7 @@ describe("POST /events deduplication", () => {
     );
 
     expect(response.status).toBe(200);
-    expect((env.SLACK_KV as any).get).not.toHaveBeenCalled();
+    expect(dedupeReads(env)).toEqual([]);
     expect(mockHandleSlackEvent).not.toHaveBeenCalled();
   });
 
@@ -316,7 +327,7 @@ describe("POST /events deduplication", () => {
     );
 
     expect(response.status).toBe(200);
-    expect((env.SLACK_KV as any).get).not.toHaveBeenCalled();
+    expect(dedupeReads(env)).toEqual([]);
     expect(mockHandleSlackEvent).not.toHaveBeenCalled();
   });
 
@@ -337,7 +348,7 @@ describe("POST /events deduplication", () => {
     );
 
     expect(response.status).toBe(200);
-    expect((env.SLACK_KV as any).get).not.toHaveBeenCalled();
+    expect(dedupeReads(env)).toEqual([]);
     expect(mockHandleSlackEvent).not.toHaveBeenCalled();
   });
 
