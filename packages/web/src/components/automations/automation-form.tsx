@@ -217,11 +217,11 @@ export function AutomationForm({ mode, initialValues, onSubmit, submitting }: Au
             if (!event.target.value.trim()) setSlackDeliveryMentionUserId("");
           }}
           placeholder="C0123456789"
-          pattern="[CG][A-Z0-9]{8,}"
+          pattern="[CGD][A-Z0-9]{8,}"
         />
         <FieldDescription className="mt-1.5">
-          Optional fixed channel ID for automation-owned Slack delivery. The agent cannot override
-          it.
+          Optional fixed channel or direct-message ID for automation-owned Slack delivery. The agent
+          cannot override it.
         </FieldDescription>
       </div>
 
