@@ -1083,6 +1083,28 @@ describe("thread-to-session mapping", () => {
     expect(stored.model).toBe("anthropic/claude-sonnet-4-6");
   });
 
+  it("delivers an automation report to a direct message and maps that thread", async () => {
+    // A report can go to one person's bot DM; their in-thread replies must continue the session.
+    seedActiveSession({ automationId: "auto-1" });
+    automationStoreMock.getById.mockResolvedValue({
+      id: "auto-1",
+      slack_delivery_channel: "D0BRENT1234",
+    });
+    mockSlackResponse({ body: { ok: true, channel: "D0BRENT1234", ts: "999.000" } });
+    mockSlackResponse({ body: { ok: true, permalink: "https://slack.example/p" } });
+    const SLACK_KV = kvSpy();
+    const response = await callHandler(
+      { channel: "CWRONG123", text: "weekly report" },
+      { SLACK_KV } as unknown as Partial<Env>,
+      { kind: "sandbox", sessionId: "sess-1" }
+    );
+    expect(response.status).toBe(200);
+    const sent = JSON.parse(fetchMock.mock.calls[0][1].body as string) as { channel: string };
+    expect(sent.channel).toBe("D0BRENT1234");
+    expect(SLACK_KV.put).toHaveBeenCalledTimes(1);
+    expect(SLACK_KV.put.mock.calls[0]![0]).toBe("thread:D0BRENT1234:999.000");
+  });
+
   it("does not reassign a thread someone else already owns", async () => {
     // Posting into an existing thread must not steal it from the session that started it.
     seedActiveSession();

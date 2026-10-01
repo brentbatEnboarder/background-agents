@@ -44,7 +44,8 @@ export const MAX_AUTOMATION_INSTRUCTIONS_LENGTH = 15_000;
 /** Fixed Slack channel destination for automation-owned delivery. */
 export const automationSlackDeliveryChannelSchema = z
   .string()
-  .regex(/^[CG][A-Z0-9]{8,}$/, "must be a Slack channel ID");
+  // C and G are channels; D is a bot direct-message conversation.
+  .regex(/^[CGD][A-Z0-9]{8,}$/, "must be a Slack channel or direct-message ID");
 
 /** Exact Slack member that automation-owned delivery may mention. */
 export const automationSlackDeliveryMentionUserIdSchema = z

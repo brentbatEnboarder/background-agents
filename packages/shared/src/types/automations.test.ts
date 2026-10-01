@@ -209,6 +209,18 @@ describe("automation request boundary contracts", () => {
     ).toBe(false);
   });
 
+  it("accepts a bot direct-message ID but not a user ID or short value", () => {
+    expect(
+      updateAutomationRequestSchema.parse({ slackDeliveryChannel: "D0C0MEE8F7E" })
+        .slackDeliveryChannel
+    ).toBe("D0C0MEE8F7E");
+    for (const value of ["U0C0MEE8F7E", "d0C0MEE8F7E", "D0C0", "@brent"]) {
+      expect(updateAutomationRequestSchema.safeParse({ slackDeliveryChannel: value }).success).toBe(
+        false
+      );
+    }
+  });
+
   it("accepts only stable uppercase Slack user IDs for delivery mentions", () => {
     expect(
       createAutomationRequestSchema.parse({
