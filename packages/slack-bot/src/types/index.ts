@@ -34,6 +34,8 @@ export interface Env {
   SLACK_ALLOWED_USER_IDS?: string;
   SLACK_ALLOWED_CHANNEL_IDS?: string;
   SLACK_DEFAULT_ENVIRONMENT_ID?: string;
+  /** Fixed reply to a user the allowlist rejects; empty keeps the rejection silent. */
+  SLACK_UNAUTHORIZED_REPLY?: string;
 
   // Secrets
   SLACK_BOT_TOKEN: string;

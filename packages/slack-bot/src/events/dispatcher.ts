@@ -4,6 +4,7 @@ import { admitSlackEvent } from "../ingress-policy";
 import type { BackgroundTaskScheduler } from "../messages/blocks";
 import type { Env } from "../types";
 import { handleAppMention, handleDirectMessage, handleThreadContinuation } from "./message-handler";
+import { replyToUnauthorizedUser } from "./unauthorized-reply";
 import type { SlackEventPayload } from "./payload";
 
 /**
@@ -18,7 +19,13 @@ export async function handleSlackEvent(
   traceId: string | undefined,
   scheduleBackground: BackgroundTaskScheduler
 ): Promise<void> {
-  if (!admitSlackEvent(payload, env).admitted) return;
+  const admission = admitSlackEvent(payload, env);
+  if (!admission.admitted) {
+    if (admission.reason === "user_not_allowed") {
+      await replyToUnauthorizedUser(payload, env, traceId);
+    }
+    return;
+  }
   if (payload.type !== "event_callback" || !payload.event) return;
   const event = payload.event;
   if (event.bot_id) return;

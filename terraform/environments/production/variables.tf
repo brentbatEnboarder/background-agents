@@ -324,6 +324,12 @@ variable "slack_allowed_channel_ids" {
   }
 }
 
+variable "slack_unauthorized_reply" {
+  description = "Fixed Slack reply to a user the allowlist rejects when they DM the bot or mention it in an allowed channel; empty keeps the rejection silent"
+  type        = string
+  default     = ""
+}
+
 variable "slack_bot_default_model" {
   description = "Model the Slack bot starts a session with when the requesting user has no saved model preference. A canonical \"provider/model\" id, or a bare \"claude-\"/\"gpt-\" id the bots normalize into that provider's namespace."
   type        = string
