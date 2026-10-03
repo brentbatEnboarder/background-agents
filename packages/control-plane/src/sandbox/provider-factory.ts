@@ -32,7 +32,8 @@ function createModalProviderFromEnv(env: Env): ModalSandboxProvider {
     env.MODAL_API_SECRET,
     env.MODAL_WORKSPACE,
     env.MODAL_ENVIRONMENT_WEB_SUFFIX,
-    env.MODAL_API_URL
+    env.MODAL_API_URL,
+    env.MODAL_APP_NAME
   );
 
   return createModalProvider(client);

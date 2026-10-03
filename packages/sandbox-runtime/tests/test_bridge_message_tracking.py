@@ -271,9 +271,9 @@ class TestBuildPromptRequestBody:
             ("anthropic/claude-opus-5", "xhigh"),
             ("anthropic/claude-sonnet-4-6", "high"),
             ("anthropic/claude-sonnet-5", "xhigh"),
-            ("openai/gpt-5.6-sol", "none"),
-            ("openai/gpt-5.6-sol", "low"),
-            ("openai/gpt-5.6-sol", "xhigh"),
+            ("openai/gpt-6.1-sol", "low"),
+            ("openai/gpt-6.1-sol", "xhigh"),
+            ("openai/gpt-6.1-sol", "max"),
             ("openai/gpt-5.6-luna", "max"),
         ],
     )
@@ -286,7 +286,7 @@ class TestBuildPromptRequestBody:
 
     def test_no_effort_preserves_opencode_default(self, bridge: AgentBridge):
         body = bridge.harness.prompt_stream._build_prompt_request_body(
-            "Hello", "openai/gpt-5.6-sol"
+            "Hello", "openai/gpt-6.1-sol"
         )
         assert "variant" not in body
         assert "options" not in body["model"]

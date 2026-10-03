@@ -92,7 +92,7 @@ describe("evaluateImageBuildForSpawn", () => {
     // Documents require the new sandbox parser even when the repository image is otherwise ready.
     expect(
       await evaluateImageBuildForSpawn(
-        await readyImage({ runtime_version: "v66-stakeholder-memory" }),
+        await readyImage({ runtime_version: "v66-legacy-runtime" }),
         SESSION_REPOSITORIES
       )
     ).toEqual({
@@ -129,7 +129,7 @@ describe("evaluateImageBuildForSpawn", () => {
   it("applies the document runtime floor to both harnesses", async () => {
     const claudeFloor = minCompatibleRuntimeVersionFor("claude");
     expect(claudeFloor).toBe(MIN_COMPATIBLE_RUNTIME_VERSION);
-    const image = await readyImage({ runtime_version: "v66-stakeholder-memory" });
+    const image = await readyImage({ runtime_version: "v66-legacy-runtime" });
 
     expect(await evaluateImageBuildForSpawn(image, SESSION_REPOSITORIES, "claude")).toEqual({
       outcome: "miss",

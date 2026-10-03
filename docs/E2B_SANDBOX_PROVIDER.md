@@ -29,22 +29,10 @@ e2b_template_id = "open-inspect-sandbox" # template name to build/use
 # e2b_template_memory_mb      = 4096                   # template memory (MB, even number)
 ```
 
-For GitHub Actions-based deployment, configure the matching repository secrets:
-
-```text
-SANDBOX_PROVIDER=e2b
-E2B_API_KEY
-E2B_TEMPLATE_ID
-E2B_API_URL                 # optional
-E2B_SANDBOX_TIMEOUT_SECONDS # optional
-E2B_AUTO_PAUSE              # optional
-E2B_TEMPLATE_CPU            # optional
-E2B_TEMPLATE_MEMORY_MB      # optional
-```
-
 The E2B provider also needs the normal Open-Inspect values such as Cloudflare, GitHub App,
 Anthropic, and web app configuration. See [GETTING_STARTED.md](./GETTING_STARTED.md) for the full
-deployment flow.
+operator-managed deployment flow. The checked-in GitHub Actions workflows do not accept provider
+credentials or deploy infrastructure.
 
 > On the **Hobby** tier (~1h runtime cap), lower `e2b_sandbox_timeout_seconds` to `3300`.
 

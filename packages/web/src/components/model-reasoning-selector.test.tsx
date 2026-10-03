@@ -33,9 +33,9 @@ const items = [
     category: "OpenAI",
     models: [
       {
-        id: "openai/gpt-5.6-sol",
-        name: "GPT 5.6 Sol",
-        description: "Frontier model",
+        id: "openai/gpt-6.1-sol",
+        name: "GPT-6.1 Sol",
+        description: "Near-Astra performance at lower cost",
       },
       {
         id: "openai/gpt-5.5",
@@ -193,7 +193,7 @@ describe("ModelReasoningSelector", () => {
 
     rerender(
       <ModelReasoningSelector
-        selectedModel="openai/gpt-5.6-sol"
+        selectedModel="openai/gpt-6.1-sol"
         reasoningEffort={undefined}
         items={items}
         onModelChange={vi.fn()}
@@ -202,7 +202,7 @@ describe("ModelReasoningSelector", () => {
     );
 
     const trigger = screen.getByRole("button", { name: /model and effort/i });
-    expect(trigger).toHaveTextContent("gpt 5.6 solMedium");
+    expect(trigger).toHaveTextContent("gpt-6.1 solMedium");
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
     const effortMenu = await screen.findByRole("menuitem", { name: /effort.*medium/i });
     effortMenu.focus();

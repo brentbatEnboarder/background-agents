@@ -122,7 +122,6 @@ module "control_plane_worker" {
       { name = "GITHUB_BOT_USERNAME", value = var.github_bot_username },
       { name = "SANDBOX_PROVIDER", value = var.sandbox_provider },
       { name = "SANDBOX_INACTIVITY_TIMEOUT_MS", value = tostring(var.sandbox_inactivity_timeout_ms) },
-      { name = "MARCUS_MEMORY_ENVIRONMENT_ID", value = var.marcus_memory_environment_id },
     ],
     local.github_oauth_enabled ? [
       { name = "GITHUB_CLIENT_ID", value = trimspace(var.github_client_id) },
@@ -132,6 +131,7 @@ module "control_plane_worker" {
     ] : [],
     trimspace(var.modal_workspace) != "" ? [
       { name = "MODAL_WORKSPACE", value = var.modal_workspace },
+      { name = "MODAL_APP_NAME", value = local.modal_app_name },
       { name = "MODAL_ENVIRONMENT", value = var.modal_environment },
       { name = "MODAL_ENVIRONMENT_WEB_SUFFIX", value = var.modal_environment_web_suffix },
     ] : [],

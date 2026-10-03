@@ -308,6 +308,7 @@ export function createSessionRuntime(platform: SessionPlatform, env: Env): Sessi
   const sandboxDashboardSettings: SandboxDashboardSettings = {
     sandboxProvider: env.SANDBOX_PROVIDER,
     modalWorkspace: env.MODAL_WORKSPACE,
+    modalAppName: env.MODAL_APP_NAME,
     modalEnvironment: env.MODAL_ENVIRONMENT,
   };
 

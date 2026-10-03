@@ -26,8 +26,8 @@ describe("resolveModelPreference", () => {
   });
 
   it("preserves an omitted effort so the model default remains selectable", () => {
-    expect(resolveModelPreference({ model: "openai/gpt-5.6-sol" }, ["openai/gpt-5.6-sol"])).toEqual(
-      { model: "openai/gpt-5.6-sol", reasoningEffort: undefined }
+    expect(resolveModelPreference({ model: "openai/gpt-6.1-sol" }, ["openai/gpt-6.1-sol"])).toEqual(
+      { model: "openai/gpt-6.1-sol", reasoningEffort: undefined }
     );
   });
 

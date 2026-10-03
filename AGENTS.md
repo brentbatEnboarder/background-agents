@@ -149,15 +149,9 @@ under 72 characters. Use the PR body for details, not the commit message.
 
 ## CI/CD
 
-Pushing to `main` auto-deploys changed services:
-
-- **Terraform** → control plane + D1 migrations + web app if `web_platform = "cloudflare"`
-  (triggers: `terraform/`, `packages/*/`)
-- **Vercel** → web app when `web_platform = "vercel"` (triggers: `packages/web/`,
-  `packages/shared/`)
-- **Modal** → data plane (triggers: `packages/modal-infra/`, deployed via Terraform apply)
-
-CI runs lint, typecheck, and tests for all TypeScript and Python packages on every push and PR.
+GitHub Actions is source-only. It runs lint, typecheck, tests, Terraform validation, and policy
+checks on pushes and pull requests; it does not authenticate to providers, apply Terraform, or
+deploy application code. Deployment is an explicit operator action and requires separate approval.
 
 ## Further Reading
 

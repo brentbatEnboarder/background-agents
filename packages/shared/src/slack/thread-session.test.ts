@@ -9,7 +9,7 @@ import {
 describe("threadSessionKey", () => {
   it("builds the key both workers agree on", () => {
     // The control plane writes this key and the Slack bot reads it. If they ever disagree the only
-    // symptom is Marcus silently ignoring a reply, so the format is pinned by test.
+    // symptom is the bot silently ignoring a reply, so the format is pinned by test.
     expect(threadSessionKey("C123", "111.222")).toBe("thread:C123:111.222");
   });
 });

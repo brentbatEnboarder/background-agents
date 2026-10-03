@@ -75,9 +75,11 @@ resource "local_file" "web_app_wrangler_production" {
     directory = ".open-next/assets"
     binding = "ASSETS"
 
+    %{if var.enable_service_bindings~}
     [[services]]
     binding = "CONTROL_PLANE_WORKER"
     service = "open-inspect-control-plane-${local.name_suffix}"
+    %{endif~}
   TOML
 }
 

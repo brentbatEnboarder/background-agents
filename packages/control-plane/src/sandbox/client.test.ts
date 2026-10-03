@@ -65,6 +65,19 @@ describe("buildModalSandboxDashboardUrl", () => {
     );
   });
 
+  it("supports a deployment-specific Modal app name", () => {
+    expect(
+      buildModalSandboxDashboardUrl({
+        workspace: "acme",
+        modalEnvironment: "cs",
+        modalAppName: "open-inspect-enboarder-cs",
+        providerObjectId: "sb-123",
+      })
+    ).toBe(
+      "https://modal.com/apps/acme/cs/deployed/open-inspect-enboarder-cs?activeTab=sandboxes&sandboxId=sb-123"
+    );
+  });
+
   it("encodes URL components", () => {
     expect(
       buildModalSandboxDashboardUrl({
@@ -114,6 +127,14 @@ describe("ModalClient", () => {
       expect(await urlCalledBy(createModalClient("secret", "acme", "prod-web"))).toBe(
         "https://acme-prod-web--open-inspect-api-snapshot-sandbox.modal.run"
       );
+    });
+
+    it("derives function hosts from a deployment-specific app name", async () => {
+      expect(
+        await urlCalledBy(
+          createModalClient("secret", "acme", "cs", undefined, "open-inspect-enboarder-cs")
+        )
+      ).toBe("https://acme-cs--open-inspect-enboarder-cs-api-snapshot-sandbox.modal.run");
     });
 
     it("serves the same function names by path when an API URL is configured", async () => {

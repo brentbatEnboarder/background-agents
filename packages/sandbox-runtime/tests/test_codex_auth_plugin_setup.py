@@ -31,8 +31,8 @@ def _auth_file(tmp_path: Path) -> Path:
 class TestCodexAuthPluginSetup:
     """Cases for codex auth proxy plugin deployment."""
 
-    def test_oauth_proxy_allows_gpt_5_6_models(self):
-        """The OAuth model filter should retain all GPT-5.6 variants."""
+    def test_oauth_proxy_allows_supported_sol_and_gpt_5_6_models(self):
+        """The OAuth model filter should retain GPT-6.1 Sol and supported GPT-5.6 variants."""
         plugin_source = (
             Path(__file__).parents[1]
             / "src"
@@ -41,8 +41,19 @@ class TestCodexAuthPluginSetup:
             / "codex-auth-plugin.js"
         ).read_text()
 
-        for model in ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"):
+        for model in ("gpt-6.1-sol", "gpt-5.6-terra", "gpt-5.6-luna"):
             assert f'"{model}"' in plugin_source
+
+    def test_gpt_6_1_sol_fixture_supports_responses_tools_and_reasoning(self):
+        fixture = json.loads(
+            (Path(__file__).parent / "fixtures" / "reasoning-models.json").read_text()
+        )
+        model = fixture["openai"]["models"]["gpt-6.1-sol"]
+
+        assert model["tool_call"] is True
+        assert model["reasoning_options"] == [
+            {"type": "effort", "values": ["low", "medium", "high", "xhigh", "max"]}
+        ]
 
     def test_oauth_proxy_excludes_unsupported_gpt_5_2_models(self):
         """The OAuth model filter should remove unsupported GPT-5.2 variants."""

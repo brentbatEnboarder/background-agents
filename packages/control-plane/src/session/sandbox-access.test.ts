@@ -79,12 +79,13 @@ describe("resolveSandboxDashboardUrl", () => {
   const modal = {
     sandboxProvider: "modal",
     modalWorkspace: "acme",
+    modalAppName: "open-inspect-enboarder-cs",
     modalEnvironment: "prod",
   };
 
   it("builds a Modal dashboard URL for the provider object", () => {
     expect(resolveSandboxDashboardUrl(modal, "sb-123")).toBe(
-      "https://modal.com/apps/acme/prod/deployed/open-inspect?activeTab=sandboxes&sandboxId=sb-123"
+      "https://modal.com/apps/acme/prod/deployed/open-inspect-enboarder-cs?activeTab=sandboxes&sandboxId=sb-123"
     );
   });
 
@@ -97,7 +98,7 @@ describe("resolveSandboxDashboardUrl", () => {
 
   it("treats an unset provider as the Modal default", () => {
     expect(resolveSandboxDashboardUrl({ ...modal, sandboxProvider: undefined }, "sb-123")).toBe(
-      "https://modal.com/apps/acme/prod/deployed/open-inspect?activeTab=sandboxes&sandboxId=sb-123"
+      "https://modal.com/apps/acme/prod/deployed/open-inspect-enboarder-cs?activeTab=sandboxes&sandboxId=sb-123"
     );
   });
 

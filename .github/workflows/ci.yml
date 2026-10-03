@@ -120,6 +120,9 @@ jobs:
       - name: Test Cloudflare logs CLI
         run: npm run test:cf-logs-cli
 
+      - name: Test CS pilot source-only policy
+        run: npm run test:cs-pilot-static
+
       - name: Check Prettier formatting
         run: npm run format:check
 

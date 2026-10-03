@@ -84,7 +84,7 @@ class TestInstallTools:
         (tools_dir / "spawn-child.js").write_text("// spawn child")
         (tools_dir / "get-child-status.js").write_text("// get status")
         (tools_dir / "cancel-child.js").write_text("// cancel child")
-        (tools_dir / "stakeholder-memory.js").write_text("// stakeholder memory")
+        (tools_dir / "create-report.js").write_text("// report tool")
 
         with _patch_paths(legacy=tmp_path / "no-legacy", tools=tools_dir):
             sup._install_tools(workdir)
@@ -94,7 +94,7 @@ class TestInstallTools:
         assert (tool_dest / "spawn-child.js").exists()
         assert (tool_dest / "get-child-status.js").exists()
         assert (tool_dest / "cancel-child.js").exists()
-        assert (tool_dest / "stakeholder-memory.js").exists()
+        assert (tool_dest / "create-report.js").exists()
         assert (tool_dest / "_bridge-client.js").read_text() == "// bridge client"
 
     def test_non_js_files_skipped(self, tmp_path):
@@ -417,29 +417,29 @@ class TestInstallSkills:
         workdir.mkdir()
 
         skills_dir = tmp_path / "app" / "sandbox" / "skills"
-        agent_browser_dir = skills_dir / "agent-browser"
-        scripts_dir = agent_browser_dir / "scripts"
-        references_dir = agent_browser_dir / "references"
+        review_dir = skills_dir / "review-helper"
+        scripts_dir = review_dir / "scripts"
+        references_dir = review_dir / "references"
         scripts_dir.mkdir(parents=True)
         references_dir.mkdir()
-        (agent_browser_dir / "SKILL.md").write_text("# agent-browser")
+        (review_dir / "SKILL.md").write_text("# review-helper")
         (scripts_dir / "helper.py").write_text("print('helper')")
         (references_dir / "notes.md").write_text("Use this reference")
         pycache_dir = scripts_dir / "__pycache__"
         pycache_dir.mkdir()
         (pycache_dir / "helper.cpython-314.pyc").write_bytes(b"compiled")
 
-        record_video_dir = skills_dir / "record-video"
-        record_video_dir.mkdir()
-        (record_video_dir / "SKILL.md").write_text("# record-video")
-        (record_video_dir / "helper.txt").write_text("fresh install")
+        deploy_dir = skills_dir / "deploy-helper"
+        deploy_dir.mkdir()
+        (deploy_dir / "SKILL.md").write_text("# deploy-helper")
+        (deploy_dir / "helper.txt").write_text("fresh install")
 
         (skills_dir / "README.md").write_text("not a skill")
         no_skill_dir = skills_dir / "not-a-skill"
         no_skill_dir.mkdir()
         (no_skill_dir / "notes.md").write_text("missing SKILL.md")
 
-        existing_file = workdir / ".opencode" / "skills" / "agent-browser" / "local.txt"
+        existing_file = workdir / ".opencode" / "skills" / "review-helper" / "local.txt"
         existing_file.parent.mkdir(parents=True)
         existing_file.write_text("keep me")
 
@@ -450,25 +450,25 @@ class TestInstallSkills:
         ):
             installed = sup._install_skills(workdir)
 
-        skill_dest = workdir / ".opencode" / "skills" / "agent-browser"
-        assert (skill_dest / "SKILL.md").read_text() == "# agent-browser"
+        skill_dest = workdir / ".opencode" / "skills" / "review-helper"
+        assert (skill_dest / "SKILL.md").read_text() == "# review-helper"
         assert (skill_dest / "scripts" / "helper.py").read_text() == "print('helper')"
         assert (skill_dest / "references" / "notes.md").read_text() == "Use this reference"
         assert not (skill_dest / "scripts" / "__pycache__").exists()
         assert existing_file.read_text() == "keep me"
-        fresh_skill_dest = workdir / ".opencode" / "skills" / "record-video"
-        assert (fresh_skill_dest / "SKILL.md").read_text() == "# record-video"
+        fresh_skill_dest = workdir / ".opencode" / "skills" / "deploy-helper"
+        assert (fresh_skill_dest / "SKILL.md").read_text() == "# deploy-helper"
         assert (fresh_skill_dest / "helper.txt").read_text() == "fresh install"
         assert not (workdir / ".opencode" / "skills" / "README.md").exists()
         assert not (workdir / ".opencode" / "skills" / "not-a-skill").exists()
         assert installed == {
-            ".opencode/skills/agent-browser/SKILL.md",
-            ".opencode/skills/agent-browser/references/notes.md",
-            ".opencode/skills/agent-browser/scripts/helper.py",
-            ".opencode/skills/record-video/SKILL.md",
-            ".opencode/skills/record-video/helper.txt",
+            ".opencode/skills/review-helper/SKILL.md",
+            ".opencode/skills/review-helper/references/notes.md",
+            ".opencode/skills/review-helper/scripts/helper.py",
+            ".opencode/skills/deploy-helper/SKILL.md",
+            ".opencode/skills/deploy-helper/helper.txt",
         }
-        assert ".opencode/skills/agent-browser/local.txt" not in installed
+        assert ".opencode/skills/review-helper/local.txt" not in installed
 
     def test_skills_dir_non_directory_is_ignored(self, tmp_path):
         """A non-directory skills path should not raise or copy files."""

@@ -1,9 +1,9 @@
-# Terraform State Backend Configuration
-# Uses Cloudflare R2 (S3-compatible storage)
+# Customer Success Terraform State Backend Configuration
+# Uses a CS-only Cloudflare R2 bucket (S3-compatible storage)
 #
 # Prerequisites:
-# 1. Create R2 bucket: wrangler r2 bucket create open-inspect-terraform-state
-# 2. Generate R2 API token with read/write permissions
+# 1. Create R2 bucket: wrangler r2 bucket create open-inspect-cs-terraform-state
+# 2. Generate a CS-only R2 API token with read/write permissions for that bucket
 # 3. Initialize with:
 #    terraform init \
 #      -backend-config="access_key=<R2_ACCESS_KEY_ID>" \
@@ -19,7 +19,7 @@
 
 terraform {
   backend "s3" {
-    bucket = "open-inspect-terraform-state"
+    bucket = "open-inspect-cs-terraform-state"
     key    = "production/terraform.tfstate"
     region = "auto"
 

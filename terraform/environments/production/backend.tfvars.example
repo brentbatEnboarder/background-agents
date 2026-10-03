@@ -1,10 +1,11 @@
-# Cloudflare R2 Backend Configuration
+# Customer Success Cloudflare R2 Backend Credentials
 # Copy this file to backend.tfvars and fill in your values.
 # NEVER commit backend.tfvars to source control!
 #
 # Usage: terraform init -backend-config=backend.tfvars
 
-# R2 API Token credentials (create at Cloudflare Dashboard → R2 → Manage R2 API Tokens)
+# CS-only R2 API Token credentials for bucket open-inspect-cs-terraform-state
+# (create at Cloudflare Dashboard → R2 → Manage R2 API Tokens)
 access_key = ""
 secret_key = ""
 

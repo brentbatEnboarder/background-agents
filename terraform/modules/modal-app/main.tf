@@ -38,7 +38,8 @@ resource "null_resource" "modal_deploy" {
     # Re-deploy when source files change
     source_hash = var.source_hash
     # Re-deploy when app name changes
-    app_name = var.app_name
+    app_name        = var.app_name
+    deployment_name = var.deployment_name
     # Re-deploy when Modal environment changes
     modal_environment = var.modal_environment
     # Ensure secrets are created first
@@ -54,6 +55,7 @@ resource "null_resource" "modal_deploy" {
       MODAL_TOKEN_SECRET = var.modal_token_secret
       MODAL_ENVIRONMENT  = var.modal_environment
       APP_NAME           = var.app_name
+      DEPLOYMENT_NAME    = var.deployment_name
       DEPLOY_PATH        = var.deploy_path
       DEPLOY_MODULE      = var.deploy_module
     }

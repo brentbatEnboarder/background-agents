@@ -153,7 +153,8 @@ fi
     uv.chmod(0o755)
 
     environment = os.environ | {
-        "APP_NAME": "open-inspect",
+        "APP_NAME": "open-inspect-test-deployment",
+        "DEPLOYMENT_NAME": "test-deployment",
         "DEPLOY_MODULE": deploy_module,
         "DEPLOY_PATH": str(deploy_dir),
         "FAIL_EAGER_BUILD": "1" if fail_eager_build else "0",
@@ -172,6 +173,43 @@ fi
         text=True,
     )
     return result, call_log.read_text().splitlines()
+
+
+def _run_secret_script(
+    tmp_path: Path, *, fail_secret_create: bool = False
+) -> subprocess.CompletedProcess[str]:
+    bin_dir = tmp_path / "secret-bin"
+    deploy_dir = tmp_path / "secret-app"
+    bin_dir.mkdir()
+    deploy_dir.mkdir()
+
+    uv = bin_dir / "uv"
+    uv.write_text(
+        """#!/bin/sh
+if [ "${FAIL_SECRET_CREATE:-}" = "1" ]; then
+    exit 42
+fi
+"""
+    )
+    uv.chmod(0o755)
+
+    environment = os.environ | {
+        "DEPLOY_PATH": str(deploy_dir),
+        "FAIL_SECRET_CREATE": "1" if fail_secret_create else "0",
+        "MODAL_ENVIRONMENT": "cs",
+        "MODAL_TOKEN_ID": "test-token-id",
+        "MODAL_TOKEN_SECRET": "test-token-secret",
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "SECRETS_JSON": '[{"name":"internal-api-test","values":{"TOKEN":"test"}}]',
+    }
+    script = Path(__file__).parents[3] / "terraform/modules/modal-app/scripts/create-secrets.sh"
+    return subprocess.run(
+        [str(script)],
+        capture_output=True,
+        check=False,
+        env=environment,
+        text=True,
+    )
 
 
 def test_modal_deploy_script_builds_sandbox_image_before_app_deploy(tmp_path: Path) -> None:
@@ -199,6 +237,20 @@ def test_modal_deploy_script_stops_when_eager_build_fails(tmp_path: Path) -> Non
         "sync --frozen",
         "run python deploy.py --build-sandbox-image",
     ]
+
+
+def test_modal_secret_script_succeeds_after_secret_reconciliation(tmp_path: Path) -> None:
+    result = _run_secret_script(tmp_path)
+
+    assert result.returncode == 0
+    assert "All Modal secrets processed successfully" in result.stdout
+
+
+def test_modal_secret_script_fails_closed(tmp_path: Path) -> None:
+    result = _run_secret_script(tmp_path, fail_secret_create=True)
+
+    assert result.returncode != 0
+    assert "Error: Failed to create secret internal-api-test" in result.stderr
 
 
 def test_src_modal_deploy_builds_sandbox_image_before_app_deploy(tmp_path: Path) -> None:

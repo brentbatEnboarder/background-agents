@@ -39,21 +39,10 @@ variable "cloudflare_worker_subdomain" {
   type        = string
 }
 
-variable "marcus_memory_environment_id" {
-  description = "Optional environment ID allowed to use durable Marcus stakeholder memory; empty disables the feature"
-  type        = string
-  default     = ""
-
-  validation {
-    condition     = var.marcus_memory_environment_id == "" || can(regex("^env_[A-Za-z0-9_-]+$", var.marcus_memory_environment_id))
-    error_message = "marcus_memory_environment_id must be empty or an env_-prefixed environment ID."
-  }
-}
-
 variable "enable_control_plane_cron_triggers" {
   description = "Whether to create the control-plane maintenance and image-build cron triggers"
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "vercel_api_token" {
@@ -107,7 +96,7 @@ variable "modal_workspace" {
 variable "modal_environment" {
   description = "Modal environment name used by the Modal CLI"
   type        = string
-  default     = "main"
+  default     = "cs"
 
   validation {
     condition     = var.sandbox_provider != "modal" || (length(trimspace(var.modal_environment)) > 0 && can(regex("^[^:/\\\\]+$", var.modal_environment)))
@@ -118,7 +107,7 @@ variable "modal_environment" {
 variable "modal_environment_web_suffix" {
   description = "Modal environment web suffix used in endpoint URLs. Use lowercase letters, digits, and dashes, or leave empty for the environment with no web suffix."
   type        = string
-  default     = ""
+  default     = "cs"
 
   validation {
     condition     = var.sandbox_provider != "modal" || can(regex("^$|^[a-z0-9-]+$", var.modal_environment_web_suffix))
@@ -252,7 +241,7 @@ variable "github_bot_default_model" {
 variable "enable_slack_bot" {
   description = "Enable the Slack bot worker. Set to false to skip deployment."
   type        = bool
-  default     = true
+  default     = false
 
   validation {
     condition     = var.enable_slack_bot == false || (length(var.slack_bot_token) > 0 && length(var.slack_signing_secret) > 0)
@@ -447,6 +436,14 @@ variable "anthropic_api_key" {
     )
     error_message = "anthropic_api_key must be non-blank when the Slack or Linear bot is enabled and classification_model is an Anthropic model."
   }
+}
+
+variable "openai_api_key" {
+  description = "Optional OpenAI API key injected only into Modal OpenCode session sandboxes. Leave blank to supply model credentials through the scoped secret store."
+  type        = string
+  sensitive   = true
+  default     = ""
+  nullable    = false
 }
 
 variable "classification_model" {
@@ -746,7 +743,7 @@ variable "sandbox_inactivity_timeout_ms" {
 variable "web_platform" {
   description = "Platform for the web app deployment: 'vercel' or 'cloudflare' (OpenNext)"
   type        = string
-  default     = "vercel"
+  default     = "cloudflare"
 
   validation {
     condition     = contains(["vercel", "cloudflare"], var.web_platform)
@@ -757,12 +754,25 @@ variable "web_platform" {
 variable "deployment_name" {
   description = "Unique deployment name used in URLs and resource names. Use something unique like your GitHub username or company name (e.g., 'acme', 'johndoe'). This will create URLs like: open-inspect-{deployment_name}.vercel.app"
   type        = string
+
+  validation {
+    condition = (
+      length(var.deployment_name) <= 36 &&
+      can(regex("^[a-z0-9]+(?:-[a-z0-9]+)*$", var.deployment_name))
+    )
+    error_message = "deployment_name must be 1-36 lowercase letters, digits, or single hyphen-separated segments, with no leading or trailing hyphen."
+  }
 }
 
 variable "app_name" {
   description = "Display name shown in the web UI tab title, sign-in page, bot messages (Slack, Linear), PR body footer, and outbound HTTP User-Agent headers."
   type        = string
-  default     = "Open-Inspect"
+  default     = "Enboarder CS Agent"
+
+  validation {
+    condition     = length(trimspace(var.app_name)) > 0
+    error_message = "app_name must not be blank."
+  }
 }
 
 variable "app_icon_url" {
@@ -774,7 +784,7 @@ variable "app_icon_url" {
 variable "enable_durable_object_bindings" {
   description = "Enable DO bindings. For initial deployment: set to false (applies migrations), then set to true (adds bindings)."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "control_plane_migration_tag" {
@@ -804,7 +814,7 @@ variable "control_plane_deleted_classes" {
 variable "enable_service_bindings" {
   description = "Enable service bindings. Set false for initial deployment if target workers don't exist yet."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "project_root" {

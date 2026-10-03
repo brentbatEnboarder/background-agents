@@ -69,8 +69,8 @@ modal_token_secret = ""
 #   empty suffix:      https://myworkspace--app.modal.run
 #   "production":      https://myworkspace-production--app.modal.run
 modal_workspace               = ""
-modal_environment             = "main"
-modal_environment_web_suffix  = ""
+modal_environment             = "cs"
+modal_environment_web_suffix  = "cs"
 
 # Daytona REST API
 # Only required when sandbox_provider = "daytona"
@@ -253,6 +253,12 @@ linear_webhook_secret = ""   # Webhook Signing Secret from the application confi
 # From: https://console.anthropic.com/
 anthropic_api_key = ""
 
+# Optional OpenAI API key for OpenCode sessions using Modal sandboxes. It is
+# injected only into the namespaced Modal LLM secret; leave blank to use the
+# scoped secret store instead. This is separate from the classifier credential.
+# From: https://platform.openai.com/api-keys
+openai_api_key = ""
+
 # OpenAI credential for the Slack/Linear bot classifiers. Required when
 # classification_model names an OpenAI model AND at least one of the Slack or
 # Linear bots is enabled; an Anthropic classifier model is served by
@@ -304,25 +310,21 @@ sandbox_provider = "modal"
 # Platform for the web app deployment
 # - "vercel": deploy the Next.js app to Vercel (requires vercel_api_token + vercel_team_id)
 # - "cloudflare": deploy the web app to Cloudflare Workers via OpenNext (no Vercel credentials needed)
-web_platform = "vercel"
+web_platform = "cloudflare"
 
 # Unique deployment name (used in resource names and URLs)
 # IMPORTANT: This must be globally unique for Vercel URLs.
 # Use something unique like your GitHub username, company name, or a random suffix.
 # Example: "acme", "johndoe", "mycompany-prod"
 # The web app URL will be: https://open-inspect-{deployment_name}.vercel.app
-deployment_name = ""
-
-# Optional env_-prefixed environment allowed to use durable Marcus stakeholder memory.
-# Leave empty to disable the feature.
-marcus_memory_environment_id = ""
+deployment_name = "enboarder-cs"
 
 # Path to project root (relative to this directory)
 project_root = "../../../"
 
 # Display name shown in the web UI, bot messages (Slack, Linear), and PR body footers.
-# Also used as the outbound HTTP User-Agent header. Defaults to "Open-Inspect".
-# app_name = "Open-Inspect"
+# The generic Open-Inspect HTTP User-Agent remains unchanged.
+app_name = "Enboarder CS Agent"
 
 # Optional URL (absolute or root-relative path) to a custom logo image for the
 # command menu and browser favicon. Leave empty to use the built-in favicon

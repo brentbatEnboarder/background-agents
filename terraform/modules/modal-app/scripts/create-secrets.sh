@@ -58,7 +58,8 @@ echo "${SECRETS_JSON}" | jq -c '.[]' | while IFS= read -r secret; do
     if uv run --directory "${DEPLOY_PATH}" modal secret create "${secret_name}" "${args[@]}" --force; then
         echo "Secret ${secret_name} created/updated successfully"
     else
-        echo "Warning: Failed to create secret ${secret_name}"
+        echo "Error: Failed to create secret ${secret_name}" >&2
+        exit 1
     fi
 done
 

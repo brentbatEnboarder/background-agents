@@ -54,7 +54,6 @@ const unrelated = [
   "packages/shared/tsconfig.test.json",
   ".github/workflows/ci.yml",
   ".github/workflows/ci-python.yml",
-  ".github/workflows/deploy-web.yml",
   ".github/workflows/terraform.yml",
   "eslint.config.js",
   "knip.json",

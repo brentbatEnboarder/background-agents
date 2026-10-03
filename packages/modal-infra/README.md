@@ -146,7 +146,7 @@ Endpoint URLs follow the pattern: `https://{workspace}--open-inspect-{endpoint}.
 ### Example: Create Sandbox
 
 ```bash
-curl -X POST "https://${WORKSPACE}--open-inspect-api-create-sandbox.modal.run" \
+curl -X POST "https://${WORKSPACE}--${MODAL_APP_NAME:-open-inspect}-api-create-sandbox.modal.run" \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
@@ -161,7 +161,7 @@ curl -X POST "https://${WORKSPACE}--open-inspect-api-create-sandbox.modal.run" \
 ### Example: Health Check
 
 ```bash
-curl "https://${WORKSPACE}--open-inspect-api-health.modal.run"
+curl "https://${WORKSPACE}--${MODAL_APP_NAME:-open-inspect}-api-health.modal.run"
 # {"success": true, "data": {"status": "healthy", "service": "open-inspect-modal"}}
 ```
 
@@ -183,7 +183,7 @@ Set via Modal secrets:
 | Criterion | Test Method |
 |-----------|-------------|
 | App deploys successfully | `modal deploy deploy.py` completes without errors |
-| Health endpoint responds | `curl https://{workspace}--open-inspect-api-health.modal.run` |
+| Health endpoint responds | `curl https://{workspace}--{modal_app_name}-api-health.modal.run` |
 | Sandbox creation works | POST to `api-create-sandbox` returns success |
 | Git sync completes | Verify HEAD matches origin after sandbox start |
 | Snapshot/restore works | Take snapshot, restore, verify workspace state |

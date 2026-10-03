@@ -155,12 +155,11 @@ terraform init \
 ### 3. Plan Changes
 
 Terraform generates and persists a dedicated provider-account credential encryption key by default.
-Existing local installations may set `provider_accounts_encryption_key` in `terraform.tfvars` to
-retain their current key; Actions deployments use the `PROVIDER_ACCOUNTS_ENCRYPTION_KEY` repository
-or production-environment secret instead. Do not change this value after storing provider account
-credentials unless every credential has first been re-encrypted and verified through the documented
-old-key-to-new-key migration before the Worker binding is updated. Back up the remote Terraform
-state because it is the recovery source for an automatically generated key.
+Existing installations may set `provider_accounts_encryption_key` in `terraform.tfvars` to retain
+their current key. Do not change this value after storing provider account credentials unless every
+credential has first been re-encrypted and verified through the documented old-key-to-new-key
+migration before the Worker binding is updated. Back up the remote Terraform state because it is the
+recovery source for an automatically generated key.
 
 ```bash
 terraform plan
@@ -172,119 +171,17 @@ terraform plan
 terraform apply
 ```
 
-## CI/CD Pipeline
+## CI Validation
 
-The GitHub Actions workflow (`.github/workflows/terraform.yml`) automates:
+The GitHub Actions workflow (`.github/workflows/terraform.yml`) performs source-only validation on
+pull requests, pushes to `main`, and manual dispatches. It checks Terraform formatting, initializes
+without a backend, validates the maintained environments, runs Terraform tests, and enforces the CS
+pilot source policy.
 
-| Trigger       | Action                           |
-| ------------- | -------------------------------- |
-| Pull Request  | `terraform plan` with PR comment |
-| Merge to main | `terraform apply` (auto-approve) |
-
-### GitHub Actions Secrets and Variables
-
-Keep credentials in Actions **Secrets**. Non-secret configuration (account/application IDs, provider
-settings, feature flags, allowlists, and branding) can use Actions **Variables** instead. The
-workflows prefer a non-empty variable, then the same-named secret, then the existing default where
-one exists. Existing secret-only deployments continue to work; an empty variable falls back to the
-secret rather than clearing it. `CLASSIFICATION_MODEL` remains variable-only.
-
-See [the CI/CD setup guide](../docs/GETTING_STARTED.md#step-10-set-up-cicd-optional) for the
-complete variable list and bulk upload examples using `gh variable set` and `gh secret set`.
-
-Add these secrets to your repository settings:
-
-```
-# Deployment
-DEPLOYMENT_NAME          # Unique name for your deployment (e.g., 'acme', 'johndoe')
-
-# Cloudflare
-CLOUDFLARE_API_TOKEN
-CLOUDFLARE_ACCOUNT_ID
-CLOUDFLARE_WORKER_SUBDOMAIN
-R2_ACCESS_KEY_ID
-R2_SECRET_ACCESS_KEY
-WEB_PLATFORM # Optional; defaults to vercel
-
-# Vercel web app (only if WEB_PLATFORM=vercel)
-VERCEL_API_TOKEN
-VERCEL_TEAM_ID
-VERCEL_PROJECT_ID
-
-# Modal
-MODAL_TOKEN_ID
-MODAL_TOKEN_SECRET
-MODAL_WORKSPACE
-MODAL_ENVIRONMENT # Optional; defaults to main
-MODAL_ENVIRONMENT_WEB_SUFFIX # Optional; lowercase letters, digits, dashes; empty for workspace--... endpoints
-MODAL_API_SECRET
-
-# Sandbox provider
-SANDBOX_PROVIDER
-
-# Daytona (only if SANDBOX_PROVIDER=daytona)
-DAYTONA_API_URL
-DAYTONA_API_KEY
-DAYTONA_BASE_SNAPSHOT
-DAYTONA_TARGET # Optional
-
-# Vercel Sandboxes (only if SANDBOX_PROVIDER=vercel)
-VERCEL_SANDBOX_TOKEN
-VERCEL_SANDBOX_PROJECT_ID
-VERCEL_SANDBOX_TEAM_ID # Optional
-VERCEL_BASE_SNAPSHOT_ID # Optional manual fallback; skips Terraform-managed snapshot builds
-VERCEL_SANDBOX_RUNTIME # Optional; defaults to node24
-VERCEL_SNAPSHOT_EXPIRATION_MS # Optional; defaults to 0
-VERCEL_SANDBOX_API_BASE_URL # Optional advanced Vercel Sandbox API base URL override
-
-# Optional GitHub sign-in pair (set both or neither)
-GH_OAUTH_CLIENT_ID
-GH_OAUTH_CLIENT_SECRET
-
-# Optional Google sign-in pair (set both or neither)
-GOOGLE_CLIENT_ID
-GOOGLE_CLIENT_SECRET
-
-# GitHub App
-GH_APP_ID
-GH_APP_PRIVATE_KEY
-GH_APP_INSTALLATION_ID
-
-# Slack
-ENABLE_SLACK_BOT # Optional; defaults to true
-SLACK_BOT_TOKEN
-SLACK_SIGNING_SECRET
-
-# GitHub bot
-ENABLE_GITHUB_BOT # Optional; defaults to false
-GH_WEBHOOK_SECRET
-GH_BOT_USERNAME
-
-# Linear bot
-ENABLE_LINEAR_BOT # Optional; defaults to false
-LINEAR_CLIENT_ID
-LINEAR_CLIENT_SECRET
-LINEAR_WEBHOOK_SECRET
-
-# API Keys
-ANTHROPIC_API_KEY # Optional; required only when classification_model is an Anthropic model and the Slack or Linear bot is enabled
-CLASSIFICATION_OPENAI_API_KEY # Required when classification_model is an OpenAI model and the Slack or Linear bot is enabled
-
-# Security Secrets
-TOKEN_ENCRYPTION_KEY
-REPO_SECRETS_ENCRYPTION_KEY
-PROVIDER_ACCOUNTS_ENCRYPTION_KEY # Optional existing provider-account key override
-NEXTAUTH_SECRET # Browser-auth secret; legacy Actions secret name
-
-# Access control
-ALLOWED_USERS
-ALLOWED_EMAIL_DOMAINS
-ENABLE_DURABLE_OBJECT_BINDINGS # Optional; defaults to true
-
-# Branding
-APP_NAME # Optional; defaults to Open-Inspect
-APP_ICON_URL
-```
+The workflow does not authenticate to providers, create a plan against remote state, run
+`terraform apply`, or deploy application code. Provider credentials belong in the approved operator
+credential store and must not be added to GitHub Actions unless a separately reviewed deployment
+workflow is introduced.
 
 ## Module Reference
 
@@ -314,7 +211,8 @@ Use the built-in two-phase flags instead of editing Terraform modules:
 1. Set `enable_durable_object_bindings = false` and `enable_service_bindings = false`.
 2. Run `terraform apply` to create the initial workers and migrations.
 3. Set both values back to `true`.
-4. Run `terraform apply` again to attach the Durable Object and service bindings.
+4. Run `terraform apply` again to attach the Durable Object and all service bindings, including the
+   web Worker's `CONTROL_PLANE_WORKER` binding.
 
 Class removal does not disable surviving bindings. Remove the retired binding, set a new migration
 tag and previous tag, list the class in `control_plane_deleted_classes`, and apply with
@@ -354,9 +252,9 @@ curl https://open-inspect-control-plane-prod.<subdomain>.workers.dev/health
 
 # 2. Sandbox backend health check
 # Modal exposes a health endpoint. Prefer the exact URL from terraform output verification_commands.
-# Manual form: https://<workspace>[-<modal_environment_web_suffix>]--open-inspect-api-health.modal.run
+# Manual form: https://<workspace>[-<modal_environment_web_suffix>]--open-inspect-<deployment_name>-api-health.modal.run
 MODAL_WORKSPACE_SLUG="<workspace>" # or "<workspace>-<modal_environment_web_suffix>"
-curl https://${MODAL_WORKSPACE_SLUG}--open-inspect-api-health.modal.run
+curl https://${MODAL_WORKSPACE_SLUG}--open-inspect-<deployment_name>-api-health.modal.run
 # Daytona and Vercel use their provider APIs directly, so there is no Open-Inspect shim health URL.
 
 # 3. Verify the web deployment
@@ -423,6 +321,6 @@ terraform apply
 
 - All sensitive variables are marked with `sensitive = true`
 - Never commit `terraform.tfvars` files
-- Use GitHub Secrets for CI/CD
+- Keep provider credentials in the approved operator credential store; validation CI needs none
 - Rotate secrets regularly
 - Review plan output before applying

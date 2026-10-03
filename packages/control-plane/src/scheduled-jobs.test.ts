@@ -57,7 +57,9 @@ const TERRAFORM_WORKER = resolve(
 
 /** The `cron_triggers` Terraform declares for the control-plane Worker. */
 function terraformCronTriggers(): string[] {
-  const match = /cron_triggers\s*=\s*\[([^\]]*)\]/.exec(readFileSync(TERRAFORM_WORKER, "utf8"));
+  const match = /cron_triggers\s*=\s*[^\n]*?\[([^\]]*)\]/.exec(
+    readFileSync(TERRAFORM_WORKER, "utf8")
+  );
   if (!match) throw new Error(`No cron_triggers in ${TERRAFORM_WORKER}`);
   return [...match[1]!.matchAll(/"([^"]+)"/g)].map((m) => m[1]!);
 }

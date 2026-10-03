@@ -25,6 +25,7 @@ locals {
   control_plane_host = "open-inspect-control-plane-${local.name_suffix}.${var.cloudflare_worker_subdomain}.workers.dev"
   control_plane_url  = "https://${local.control_plane_host}"
   ws_url             = "wss://${local.control_plane_host}"
+  modal_app_name     = "open-inspect-${local.name_suffix}"
 
   # Must match the deployed Worker's `name` and the custom-domain `service` binding.
   web_worker_name = "open-inspect-web-${local.name_suffix}"
@@ -65,6 +66,7 @@ locals {
   # per-repository secret store, which overrides this secret either way.
   modal_llm_secret_values = {
     ANTHROPIC_API_KEY = trimspace(var.anthropic_api_key)
+    OPENAI_API_KEY    = trimspace(var.openai_api_key)
   }
 
   # OpenComputer reads its sandbox credentials from the control plane rather than

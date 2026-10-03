@@ -158,12 +158,12 @@ export const MODEL_CATALOG = [
         },
       },
       {
-        id: "openai/gpt-5.6-sol",
-        name: "GPT 5.6 Sol",
-        description: "Frontier model for complex professional work",
+        id: "openai/gpt-6.1-sol",
+        name: "GPT-6.1 Sol",
+        description: "Near-Astra performance for complex professional work at lower cost",
         reasoning: {
-          efforts: ["none", "low", "medium", "high", "xhigh"],
-          default: GPT_5_6_DEFAULT_REASONING_EFFORT,
+          efforts: ["low", "medium", "high", "xhigh", "max"],
+          default: "medium",
         },
       },
       {

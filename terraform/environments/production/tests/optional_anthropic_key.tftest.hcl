@@ -56,7 +56,10 @@ run "a_deployment_with_no_anthropic_key_plans" {
   # The key stays present with an empty value: --force then reconciles a
   # previously configured credential away instead of leaving it behind.
   assert {
-    condition     = local.modal_llm_secret_values == { ANTHROPIC_API_KEY = "" }
+    condition = local.modal_llm_secret_values == {
+      ANTHROPIC_API_KEY = ""
+      OPENAI_API_KEY    = ""
+    }
     error_message = "An unset Anthropic key must be injected as an empty value, not a credential."
   }
 }
@@ -69,7 +72,10 @@ run "a_configured_key_is_injected_into_modal" {
   }
 
   assert {
-    condition     = local.modal_llm_secret_values == { ANTHROPIC_API_KEY = "test-anthropic-key" }
+    condition = local.modal_llm_secret_values == {
+      ANTHROPIC_API_KEY = "test-anthropic-key"
+      OPENAI_API_KEY    = ""
+    }
     error_message = "A configured Anthropic key must be injected as a deployment-wide LLM key."
   }
 }
@@ -83,8 +89,82 @@ run "a_blank_key_is_not_treated_as_configured" {
   }
 
   assert {
-    condition     = local.modal_llm_secret_values == { ANTHROPIC_API_KEY = "" }
+    condition = local.modal_llm_secret_values == {
+      ANTHROPIC_API_KEY = ""
+      OPENAI_API_KEY    = ""
+    }
     error_message = "A whitespace-only Anthropic key must normalize to empty, not reach a sandbox."
+  }
+}
+
+run "a_configured_openai_key_is_injected_into_modal" {
+  command = plan
+
+  variables {
+    openai_api_key = "test-openai-session-key"
+  }
+
+  assert {
+    condition = local.modal_llm_secret_values == {
+      ANTHROPIC_API_KEY = ""
+      OPENAI_API_KEY    = "test-openai-session-key"
+    }
+    error_message = "A configured OpenAI key must be injected into the Modal LLM secret."
+  }
+
+  assert {
+    condition     = !contains(module.control_plane_worker.secret_binding_names, "OPENAI_API_KEY")
+    error_message = "The Modal session OpenAI key must not be bound to the control plane."
+  }
+}
+
+run "an_empty_openai_key_is_retained_for_reconciliation" {
+  command = plan
+
+  variables {
+    openai_api_key = ""
+  }
+
+  assert {
+    condition     = local.modal_llm_secret_values.OPENAI_API_KEY == ""
+    error_message = "An empty OpenAI key must remain in the Modal secret map to reconcile an old credential away."
+  }
+}
+
+run "a_whitespace_openai_key_is_normalized_to_empty" {
+  command = plan
+
+  variables {
+    openai_api_key = "   "
+  }
+
+  assert {
+    condition     = local.modal_llm_secret_values.OPENAI_API_KEY == ""
+    error_message = "A whitespace-only OpenAI key must normalize to empty in the Modal secret map."
+  }
+}
+
+run "the_modal_openai_key_is_not_bound_to_classifier_bots" {
+  command = plan
+
+  variables {
+    enable_slack_bot          = true
+    slack_bot_token           = "xoxb-test"
+    slack_signing_secret      = "test-signing-secret"
+    slack_app_id              = "A123"
+    slack_team_id             = "T123"
+    slack_allowed_user_ids    = "U123"
+    slack_allowed_channel_ids = "C123"
+    anthropic_api_key         = "test-anthropic-key"
+    openai_api_key            = "test-openai-session-key"
+  }
+
+  assert {
+    condition = (
+      contains(module.slack_bot_worker[0].secret_binding_names, "ANTHROPIC_API_KEY") &&
+      !contains(module.slack_bot_worker[0].secret_binding_names, "OPENAI_API_KEY")
+    )
+    error_message = "The Modal session OpenAI key must not be bound to classifier bots."
   }
 }
 

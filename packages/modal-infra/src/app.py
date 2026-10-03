@@ -13,7 +13,7 @@ import modal
 
 import sandbox_runtime
 
-from .app_config import APP_NAME
+from .app_config import APP_NAME, GITHUB_APP_SECRET_NAME, INTERNAL_API_SECRET_NAME, LLM_SECRET_NAME
 from .images.base import deployed_image_environment
 from .log_config import get_logger
 
@@ -45,12 +45,12 @@ function_image = (
 # snapshots. No key is required: the secret holds whichever providers the
 # deployment configured, and a value left empty means sandboxes take that
 # provider's credential from the control plane's secret store instead.
-llm_secrets = modal.Secret.from_name("llm-api-keys")
+llm_secrets = modal.Secret.from_name(LLM_SECRET_NAME)
 
 # Secrets for GitHub App - used for git operations (clone, push)
 # These are used to generate installation tokens, NOT injected into sandboxes
 github_app_secrets = modal.Secret.from_name(
-    "github-app",
+    GITHUB_APP_SECRET_NAME,
     required_keys=["GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY", "GITHUB_APP_INSTALLATION_ID"],
 )
 
@@ -62,7 +62,7 @@ github_app_secrets = modal.Secret.from_name(
 #   SCM_PROVIDER: "github" (default) or "gitlab" — selects the clone credential type
 #   GITLAB_ACCESS_TOKEN: GitLab PAT used as clone credential when SCM_PROVIDER=gitlab
 internal_api_secret = modal.Secret.from_name(
-    "internal-api",
+    INTERNAL_API_SECRET_NAME,
     required_keys=["MODAL_API_SECRET"],
 )
 

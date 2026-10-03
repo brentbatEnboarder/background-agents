@@ -19,7 +19,8 @@ module "modal_app" {
   modal_token_id     = var.modal_token_id
   modal_token_secret = var.modal_token_secret
 
-  app_name                     = "open-inspect"
+  deployment_name              = var.deployment_name
+  app_name                     = local.modal_app_name
   workspace                    = var.modal_workspace
   modal_environment            = var.modal_environment
   modal_environment_web_suffix = var.modal_environment_web_suffix
@@ -29,11 +30,11 @@ module "modal_app" {
 
   secrets = [
     {
-      name   = "llm-api-keys"
+      name   = "llm-api-keys-${local.name_suffix}"
       values = local.modal_llm_secret_values
     },
     {
-      name = "github-app"
+      name = "github-app-${local.name_suffix}"
       values = {
         GITHUB_APP_ID              = var.github_app_id
         GITHUB_APP_PRIVATE_KEY     = var.github_app_private_key
@@ -41,7 +42,7 @@ module "modal_app" {
       }
     },
     {
-      name = "internal-api"
+      name = "internal-api-${local.name_suffix}"
       values = {
         MODAL_API_SECRET            = var.modal_api_secret
         ALLOWED_CONTROL_PLANE_HOSTS = local.control_plane_host

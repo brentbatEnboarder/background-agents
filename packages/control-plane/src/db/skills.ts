@@ -20,13 +20,7 @@ import { isUniqueConstraintError } from "./errors";
 import { MAX_D1_QUERY_PARAMETERS } from "./query-limits";
 import type { SqlDatabase, SqlStatement } from "./sql-database";
 
-const RESERVED_SKILL_NAMES = new Set([
-  "agent-browser",
-  "record-video",
-  "upload-screenshot",
-  "visual-verification",
-  "customize-opencode",
-]);
+const RESERVED_SKILL_NAMES = new Set(["customize-opencode"]);
 
 interface SkillRow {
   id: string;

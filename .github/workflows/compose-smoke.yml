@@ -81,7 +81,6 @@ jobs:
             ':(exclude)packages/shared/tsconfig.test.json'
             ':(exclude).github/workflows/ci.yml'
             ':(exclude).github/workflows/ci-python.yml'
-            ':(exclude).github/workflows/deploy-web.yml'
             ':(exclude).github/workflows/terraform.yml'
             ':(exclude)eslint.config.js'
             ':(exclude)knip.json'

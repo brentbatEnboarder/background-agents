@@ -5,6 +5,7 @@
 #   MODAL_TOKEN_SECRET - Modal API token secret
 #   MODAL_ENVIRONMENT - Modal environment to deploy into
 #   APP_NAME - Name of the app (for logging)
+#   DEPLOYMENT_NAME - Deployment slug used for Modal app and secret names
 #   DEPLOY_PATH - Path to the Modal app source
 #   DEPLOY_MODULE - Module to deploy (e.g., 'deploy' or 'src')
 
@@ -30,6 +31,19 @@ if [[ -z "${APP_NAME:-}" ]]; then
     echo "Error: APP_NAME environment variable is not set"
     exit 1
 fi
+
+if [[ -z "${DEPLOYMENT_NAME:-}" ]]; then
+    echo "Error: DEPLOYMENT_NAME environment variable is not set"
+    exit 1
+fi
+
+expected_app_name="open-inspect-${DEPLOYMENT_NAME}"
+if [[ "${APP_NAME}" != "${expected_app_name}" ]]; then
+    echo "Error: APP_NAME must be ${expected_app_name} for deployment ${DEPLOYMENT_NAME}"
+    exit 1
+fi
+
+export OPEN_INSPECT_DEPLOYMENT_NAME="${DEPLOYMENT_NAME}"
 
 if [[ -z "${DEPLOY_PATH:-}" ]]; then
     echo "Error: DEPLOY_PATH environment variable is not set"

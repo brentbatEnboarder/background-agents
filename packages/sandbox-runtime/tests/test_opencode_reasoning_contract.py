@@ -3,11 +3,9 @@
 Uses real OpenCode 1.18.29, an isolated catalog/config, and fake localhost providers.
 Only reasoning settings are retained from requests; no real provider keys are used.
 
-Fixture: public subset of https://models.opencode.ai/api.json, retrieved 2026-09-09.
-Source SHA-256: a55f5a544d356a15a6491bc3293f2dabb692a381e65cce69fee4741de9636733
-Subset SHA-256: 2c9ff58346fec2db5cc4e1fefc2a6fa752f96570fca06d81bd60a9e93260955f
-Reconcile this frozen fixture with shared model/effort definitions when changing
-models or the binary. Mocks verify serialization, not live provider acceptance.
+Fixture: public subset of https://models.opencode.ai/api.json, retrieved 2026-09-09,
+with supported models reconciled to the current project contract. Mocks verify
+serialization, not live provider acceptance.
 """
 
 import json
@@ -251,10 +249,10 @@ async def test_all_fixture_efforts_reach_provider(wire_server):
 
 async def test_defaults_and_switching(wire_server):
     call, captured = wire_server
-    # The configured agent's High default must survive omission and yield to a variant.
-    sent, session = submit(call, captured, "openai/gpt-5.6-sol", None)
-    assert sent["reasoning"]["effort"] == "high"
-    sent, session = submit(call, captured, "openai/gpt-5.6-sol", "low", session)
+    # The configured agent's Medium default must survive omission and yield to a variant.
+    sent, session = submit(call, captured, "openai/gpt-6.1-sol", None)
+    assert sent["reasoning"]["effort"] == "medium"
+    sent, session = submit(call, captured, "openai/gpt-6.1-sol", "low", session)
     assert sent["reasoning"]["effort"] == "low"
     sent, session = submit(call, captured, "anthropic/claude-opus-4-5", "max", session)
     assert sent["thinking"] == {"type": "enabled", "budget_tokens": 31999}
@@ -265,7 +263,7 @@ async def test_defaults_and_switching(wire_server):
 async def test_unsupported_request_options_do_not_override_defaults(wire_server):
     call, captured = wire_server
     base = {
-        "model": {"providerID": "openai", "modelID": "gpt-5.6-sol"},
+        "model": {"providerID": "openai", "modelID": "gpt-6.1-sol"},
         "parts": [{"type": "text", "text": "Reply only OK. Do not use tools."}],
     }
     for effort in ("low", "max"):
@@ -280,7 +278,7 @@ async def test_unsupported_request_options_do_not_override_defaults(wire_server)
             captured.clear()
             result = call(f"/session/{session}/message", body)
             assert not result["info"].get("error")
-            assert captured[-1]["reasoning"]["effort"] == "high"
+            assert captured[-1]["reasoning"]["effort"] == "medium"
     for model in ("claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-5"):
         session = call("/session", {"title": "Reasoning contract"})["id"]
         captured.clear()

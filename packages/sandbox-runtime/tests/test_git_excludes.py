@@ -24,7 +24,7 @@ def test_managed_excludes_preserve_user_entries_and_are_idempotent(tmp_path: Pat
 
     runtime_paths = {
         ".opencode/tool/spawn-child.js",
-        ".opencode/skills/agent-browser/SKILL.md",
+        ".opencode/skills/review-helper/SKILL.md",
     }
     install_runtime_git_excludes(repo, runtime_paths)
     first = exclude.read_text()
@@ -32,14 +32,14 @@ def test_managed_excludes_preserve_user_entries_and_are_idempotent(tmp_path: Pat
         repo,
         [
             ".opencode/tool/spawn-child.js",
-            ".opencode/skills/agent-browser/SKILL.md",
+            ".opencode/skills/review-helper/SKILL.md",
         ],
     )
 
     assert exclude.read_text() == first
     assert first.startswith("# user entries\n*.local\n")
     assert first.count("# BEGIN Open-Inspect runtime assets") == 1
-    assert "/.opencode/skills/agent-browser/SKILL.md" in first
+    assert "/.opencode/skills/review-helper/SKILL.md" in first
     assert "/.opencode/tool/spawn-child.js" in first
 
 

@@ -42,3 +42,18 @@ output "secret_binding_names" {
   description = "Names of configured secret bindings; secret values are not exposed."
   value       = nonsensitive([for binding in var.secrets : binding.name])
 }
+
+output "durable_object_binding_names" {
+  description = "Names of effective Durable Object bindings."
+  value       = var.enable_durable_object_bindings ? [for binding in var.durable_objects : binding.binding_name] : []
+}
+
+output "service_binding_names" {
+  description = "Names of effective service bindings."
+  value       = var.enable_service_bindings ? [for binding in var.service_bindings : binding.binding_name] : []
+}
+
+output "migration_present" {
+  description = "Whether this Worker version emits a Durable Object migration."
+  value       = (length(var.durable_objects) > 0 || length(var.deleted_classes) > 0) && (!var.enable_durable_object_bindings || length(var.deleted_classes) > 0)
+}

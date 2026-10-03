@@ -76,7 +76,7 @@ def test_pack_rejects_stale_locks_before_creating_context(checkout, tmp_path, pr
 @pytest.mark.parametrize(
     "source",
     [
-        "packages/sandbox-runtime/src/sandbox_runtime/skills/agent-browser/SKILL.md",
+        "packages/sandbox-runtime/src/sandbox_runtime/tools/spawn-child.js",
         "packages/modal-infra/src/images/base.py",
         "packages/modal-infra/deploy.py",
         "terraform/modules/modal-app/scripts/deploy.sh",
@@ -107,10 +107,10 @@ def test_vercel_transitive_build_inputs_are_covered(checkout, source):
 
 
 def test_runtime_assets_are_packed_without_per_file_manifest(checkout, tmp_path):
-    skill = "packages/sandbox-runtime/src/sandbox_runtime/skills/agent-browser/SKILL.md"
-    (checkout / skill).write_text("updated skill")
+    runtime_asset = "packages/sandbox-runtime/src/sandbox_runtime/tools/spawn-child.js"
+    (checkout / runtime_asset).write_text("updated tool")
     packed = pack_bundle(checkout, "e2b", tmp_path / "bundles")
-    assert (packed / skill).read_text() == "updated skill"
+    assert (packed / runtime_asset).read_text() == "updated tool"
     config = json.loads((packed / "build-config.json").read_text())
     assert set(config) == {"provider", "target", "runtimeVersion", "runtimeEnv", "buildHash"}
     assert not (packed / "packages/e2b-infra").exists()

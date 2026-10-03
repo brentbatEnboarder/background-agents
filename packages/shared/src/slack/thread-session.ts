@@ -7,7 +7,7 @@ import { z } from "zod";
  * replies in a thread; the control plane writes it when a session posts a top-level message, so that
  * replying to an automation-delivered report continues the session that produced the report rather
  * than starting a cold one. The key format and the schema live here, in shared, because a silent
- * divergence between the writer and the reader would surface only as Marcus ignoring a reply --
+ * divergence between the writer and the reader would surface only as the bot ignoring a reply --
  * `safeParse` failing returns null, and the reply path treats null as "no mapping" and does nothing.
  */
 export const THREAD_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;

@@ -990,9 +990,9 @@ curl https://open-inspect-control-plane-{deployment_name}.YOUR-SUBDOMAIN.workers
 
 # 2. Sandbox backend health check
 # Modal exposes a health endpoint. Prefer the exact URL from terraform output verification_commands.
-# Manual form: https://<workspace>[-<modal_environment_web_suffix>]--open-inspect-api-health.modal.run
+# Manual form: https://<workspace>[-<modal_environment_web_suffix>]--open-inspect-<deployment_name>-api-health.modal.run
 MODAL_WORKSPACE_SLUG="YOUR-WORKSPACE" # or "YOUR-WORKSPACE-YOUR-MODAL-WEB-SUFFIX"
-curl https://${MODAL_WORKSPACE_SLUG}--open-inspect-api-health.modal.run
+curl https://${MODAL_WORKSPACE_SLUG}--open-inspect-{deployment_name}-api-health.modal.run
 # Daytona and Vercel use their provider APIs directly, so there is no Open-Inspect shim health URL.
 
 # 3. Web app (should return 200)
@@ -1008,13 +1008,15 @@ curl -I "$(terraform output -raw web_app_url)"
 
 ---
 
-## Step 10: Set Up CI/CD (Optional)
+## Step 10: CI Validation
 
-Enable automatic deployments when you push to main by configuring GitHub Actions secrets and
-variables under your fork's **Settings → Secrets and variables → Actions**.
+The checked-in GitHub Actions workflow performs source-only validation. It does not authenticate to
+providers, create a plan against remote state, run `terraform apply`, or deploy application code. No
+provider credentials are required by the workflow.
 
-Use the **Variables** tab for the following non-secret settings (only configure the providers and
-features you use):
+The names below are retained only as a migration reference for the removed deployment workflow. Do
+not configure them in GitHub Actions unless a replacement workflow has received separate security
+review and explicit approval:
 
 ```text
 # Deployment and Cloudflare
@@ -1085,17 +1087,9 @@ E2B_TEMPLATE_CPU
 E2B_TEMPLATE_MEMORY_MB
 ```
 
-These settings resolve as **non-empty variable → same-named secret → existing default**, where a
-workflow default exists. Existing secret-only deployments need no migration. If both are set, the
-variable wins; delete it to return to the secret. An empty variable does not clear an existing
-secret. Values such as `false` and `0` are strings in Actions variables and are preserved.
-
-Keep credentials in the **Secrets** tab: API tokens/keys, OAuth client secrets, signing secrets,
-private keys, encryption keys, and both `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`. Allowlist values
-may contain personal information; leave them in secrets if you prefer masking in workflow logs.
-
-The table below describes deployment settings and credentials; use Variables for the names above and
-Secrets for credentials:
+The removed workflow resolved these settings as **non-empty variable → same-named secret → existing
+default**. The table is descriptive only; current deployments use operator-managed Terraform inputs
+and the approved credential store.
 
 | Setting Name                       | Value                                                                                       |
 | ---------------------------------- | ------------------------------------------------------------------------------------------- |
@@ -1112,7 +1106,7 @@ Secrets for credentials:
 | `MODAL_TOKEN_ID`                   | Modal token ID                                                                              |
 | `MODAL_TOKEN_SECRET`               | Modal token secret                                                                          |
 | `MODAL_WORKSPACE`                  | Modal workspace name                                                                        |
-| `MODAL_ENVIRONMENT`                | Modal environment name (defaults to `main`)                                                 |
+| `MODAL_ENVIRONMENT`                | Modal environment name (CS foundation default: `cs`)                                        |
 | `MODAL_ENVIRONMENT_WEB_SUFFIX`     | Modal environment web suffix for endpoint URLs; lowercase letters, digits, dashes, or empty |
 | `SANDBOX_PROVIDER`                 | `modal`, `daytona`, or `vercel`                                                             |
 | `DAYTONA_API_URL`                  | Daytona API URL _(only if `sandbox_provider = "daytona"`)_                                  |
@@ -1133,7 +1127,7 @@ Secrets for credentials:
 | `GH_APP_ID`                        | Required GitHub App repository-access ID                                                    |
 | `GH_APP_PRIVATE_KEY`               | Required GitHub App repository-access private key (PKCS#8 format)                           |
 | `GH_APP_INSTALLATION_ID`           | Required GitHub App repository-access installation ID                                       |
-| `ENABLE_SLACK_BOT`                 | `true` to deploy Slack bot, `false` to skip (default: `true`)                               |
+| `ENABLE_SLACK_BOT`                 | `true` to deploy Slack bot, `false` to skip (CS foundation default: `false`)                |
 | `SLACK_BOT_TOKEN`                  | Slack bot token (required if enabled)                                                       |
 | `SLACK_SIGNING_SECRET`             | Slack signing secret (required if enabled)                                                  |
 | `SLACK_APP_ID`                     | Expected Slack app ID (required if enabled)                                                 |
@@ -1158,17 +1152,16 @@ Secrets for credentials:
 | `ALLOWED_EMAIL_DOMAINS`            | Comma-separated email domains (or empty for all domains)                                    |
 | `ALLOWED_EMAILS`                   | Comma-separated exact email addresses (for individual users on shared domains)              |
 | `ALLOWED_GITHUB_ORGS`              | Comma-separated GitHub orgs whose active members can sign in                                |
-| `ENABLE_DURABLE_OBJECT_BINDINGS`   | Optional Terraform CI flag for Durable Object phase 1 (defaults to `true`)                  |
+| `ENABLE_DURABLE_OBJECT_BINDINGS`   | Optional Terraform input for Durable Object phase 1 (CS foundation default: `false`)        |
 | `ENABLE_GITHUB_BOT`                | `true` to deploy GitHub bot worker (or empty to skip)                                       |
 | `GH_WEBHOOK_SECRET`                | GitHub webhook secret (required if GitHub bot enabled)                                      |
 | `GH_BOT_USERNAME`                  | GitHub App bot username, e.g., `my-app[bot]` (required if GitHub bot enabled)               |
-| `APP_NAME`                         | Optional display name for whitelabeling (default: `Open-Inspect`)                           |
+| `APP_NAME`                         | Optional display name for whitelabeling (CS foundation default: `Enboarder CS Agent`)       |
 | `APP_ICON_URL`                     | Optional URL to a custom logo/favicon (default: built-in icon)                              |
 
-`CLASSIFICATION_MODEL` is an optional Actions **variable**, not a secret — add it under Settings →
-Secrets and variables → Actions → _Variables_ to point the Slack/Linear classifiers at a different
-model (for example `gpt-5.4-mini`). Leave it unset to keep the Terraform default. An OpenAI value
-also requires the `CLASSIFICATION_OPENAI_API_KEY` secret; an Anthropic value is served by
+`CLASSIFICATION_MODEL` is an optional Terraform input that points the Slack/Linear classifiers at a
+different model (for example `gpt-5.4-mini`). Leave it unset to keep the Terraform default. An
+OpenAI value also requires `CLASSIFICATION_OPENAI_API_KEY`; an Anthropic value is served by
 `ANTHROPIC_API_KEY`.
 
 When enabling or upgrading the Linear bot, also enable **Client credentials tokens** on the OAuth
@@ -1176,52 +1169,15 @@ application in **Linear Settings → API → Applications**. This provider-side 
 by Terraform. Existing eligible single-workspace installations transition on their next request
 without uninstalling or reinstalling the app.
 
-**Bulk upload with `gh` CLI:**
-
-For non-secret settings, create a `.variables` file:
-
-```dotenv
-CLOUDFLARE_ACCOUNT_ID=your-account-id
-DEPLOYMENT_NAME=my-deployment
-WEB_PLATFORM=cloudflare
-ENABLE_SLACK_BOT=false
-```
-
-Upload it with `gh variable set -f .variables`. For credentials, create a `.secrets` file (don't
-commit this!):
-
-```
-CLOUDFLARE_API_TOKEN=your-token
-ANTHROPIC_API_KEY=sk-ant-...
-DEEPSEEK_API_KEY=sk-...
-# ... add all secrets
-```
-
-Then upload all at once (run from your fork's directory, or use
-`-R {your_github_username}/{background-agents}`):
-
-```bash
-gh secret set -f .secrets
-```
-
-If you bulk upload from a file, set multiline secrets like `GH_APP_PRIVATE_KEY` separately so the
-PEM formatting is preserved:
-
-```bash
-gh secret set GH_APP_PRIVATE_KEY < private-key-pkcs8.pem
-```
-
-Once configured, the GitHub Actions workflow will:
-
-- Run `terraform plan` on pull requests (with PR comment)
-- Run `terraform apply` when merged to main
+The current GitHub Actions workflow runs formatting, initialization without a backend, validation,
+Terraform tests, and the CS pilot source policy on pull requests, pushes to `main`, and manual
+dispatches. Deployment remains an explicit operator action.
 
 Terraform generates and persists `PROVIDER_ACCOUNTS_ENCRYPTION_KEY` when no override is configured.
-Existing local Terraform installations retain an existing key through the
-`provider_accounts_encryption_key` input; Actions deployments retain it through the
-`PROVIDER_ACCOUNTS_ENCRYPTION_KEY` repository or production-environment secret. Changing the key
-makes stored provider credentials unreadable. Preserve backups of the remote Terraform state because
-it is the recovery source for automatically generated keys.
+Existing Terraform installations retain an existing key through the
+`provider_accounts_encryption_key` input. Changing the key makes stored provider credentials
+unreadable. Preserve backups of the remote Terraform state because it is the recovery source for
+automatically generated keys.
 
 ---
 
@@ -1230,9 +1186,8 @@ it is the recovery source for automatically generated keys.
 To update after pulling changes from upstream:
 
 Terraform generates the provider-account credential key for installations without an existing
-override. For local applies, keep any existing `provider_accounts_encryption_key` input unchanged.
-For Actions deployments, keep any existing `PROVIDER_ACCOUNTS_ENCRYPTION_KEY` repository or
-production-environment secret unchanged so stored provider credentials remain readable.
+override. Keep any existing `provider_accounts_encryption_key` input unchanged so stored provider
+credentials remain readable.
 
 ```bash
 # Pull latest changes
@@ -1414,7 +1369,7 @@ This occurs on first deployment. Follow the two-phase deployment process:
 
 - **Never commit** `terraform.tfvars` or `backend.tfvars` to source control
 - The `.gitignore` already excludes these files
-- Use GitHub Secrets for CI/CD, not hardcoded values
+- Keep provider credentials in the approved operator credential store; validation CI needs none
 - Rotate secrets periodically using `terraform apply` after updating `terraform.tfvars`
 - Review the [Security Model](../README.md#security-model-single-tenant-only) - this system is
   designed for single-tenant deployment

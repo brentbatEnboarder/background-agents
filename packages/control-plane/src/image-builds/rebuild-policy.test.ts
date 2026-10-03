@@ -39,7 +39,7 @@ describe("evaluateImageBuildRebuildPolicy", () => {
     expect(
       evaluateImageBuildRebuildPolicy(
         unit,
-        [row({ runtimeVersion: "v66-stakeholder-memory" })],
+        [row({ runtimeVersion: "v66-legacy-runtime" })],
         "modal"
       )
     ).toMatchObject({ type: "rebuild", reason: "runtime_incompatible" });

@@ -341,16 +341,17 @@ npx vercel --prod
 
 ```bash
 curl https://open-inspect-control-plane-{deployment_name}.{subdomain}.workers.dev/health
-curl https://{workspace}--open-inspect-api-health.modal.run
+curl https://{workspace}--open-inspect-{deployment_name}-api-health.modal.run
 curl -I "$(terraform output -raw web_app_url)"
 ```
 
 Present a deployment summary table. Instruct the user to test: visit the web app, sign in with each
 configured provider, create a session, and send a prompt.
 
-## Phase 13: CI/CD Setup (Optional)
+## Phase 13: CI Validation
 
-Ask if user wants GitHub Actions CI/CD. If yes, use `gh secret set` for all required secrets.
+Confirm that GitHub Actions remains source-only. Do not upload provider credentials or add a
+deployment workflow without separate security review and explicit approval.
 
 ## Error Handling
 

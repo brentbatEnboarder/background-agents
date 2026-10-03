@@ -15,6 +15,11 @@ variable "app_name" {
   type        = string
 }
 
+variable "deployment_name" {
+  description = "Deployment slug used to namespace Modal app and secret references"
+  type        = string
+}
+
 variable "workspace" {
   description = "Modal workspace name"
   type        = string

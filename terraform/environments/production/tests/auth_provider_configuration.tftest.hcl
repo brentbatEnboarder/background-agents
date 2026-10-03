@@ -32,11 +32,7 @@ variables {
   modal_workspace    = "test-workspace"
   modal_api_secret   = "test-modal-api-secret"
 
-  web_platform      = "cloudflare"
-  project_root      = "../../../"
-  enable_github_bot = false
-  enable_slack_bot  = false
-  enable_linear_bot = false
+  project_root = "../../../"
 
   github_client_id     = "github-id"
   github_client_secret = "github-secret"
@@ -45,6 +41,32 @@ variables {
 
 run "github_only" {
   command = plan
+
+  assert {
+    condition     = module.modal_app[0].app_name == "open-inspect-auth-provider-test"
+    error_message = "The Modal app name must be namespaced by deployment_name."
+  }
+
+  assert {
+    condition     = module.control_plane_worker.plain_text_bindings["MODAL_APP_NAME"] == module.modal_app[0].app_name
+    error_message = "The control plane must use the exact deployment-specific Modal app name."
+  }
+
+  assert {
+    condition = (
+      var.web_platform == "cloudflare" &&
+      var.app_name == "Enboarder CS Agent" &&
+      var.modal_environment == "cs" &&
+      var.modal_environment_web_suffix == "cs" &&
+      !var.enable_slack_bot &&
+      !var.enable_github_bot &&
+      !var.enable_linear_bot &&
+      !var.enable_control_plane_cron_triggers &&
+      !var.enable_durable_object_bindings &&
+      !var.enable_service_bindings
+    )
+    error_message = "The CS foundation must default to Cloudflare, the CS Modal environment, and disabled optional bots and cron triggers."
+  }
 
   assert {
     condition     = local.github_oauth_enabled && !local.google_enabled
@@ -67,9 +89,111 @@ run "github_only" {
   }
 
   assert {
+    condition = (
+      length(module.control_plane_worker.durable_object_binding_names) == 0 &&
+      length(module.control_plane_worker.service_binding_names) == 0 &&
+      module.control_plane_worker.migration_present &&
+      !strcontains(local_file.web_app_wrangler_production[0].content, "CONTROL_PLANE_WORKER")
+    )
+    error_message = "Phase one must emit the Durable Object migration without Durable Object or service bindings, including the web Worker binding."
+  }
+
+  assert {
     condition     = nonsensitive(local.effective_provider_accounts_encryption_key) == "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
     error_message = "An operator-provided provider account key must remain unchanged."
   }
+}
+
+run "phase_two_bindings" {
+  command = plan
+
+  variables {
+    enable_durable_object_bindings = true
+    enable_service_bindings        = true
+    enable_slack_bot               = true
+    slack_bot_token                = "test-slack-token"
+    slack_signing_secret           = "test-slack-signing-secret"
+    slack_app_id                   = "A123"
+    slack_team_id                  = "T123"
+    slack_allowed_user_ids         = "U123"
+    slack_allowed_channel_ids      = "C123"
+  }
+
+  assert {
+    condition = (
+      length(module.control_plane_worker.durable_object_binding_names) == 1 &&
+      module.control_plane_worker.durable_object_binding_names[0] == "SESSION" &&
+      length(module.control_plane_worker.service_binding_names) == 1 &&
+      module.control_plane_worker.service_binding_names[0] == "SLACK_BOT" &&
+      strcontains(local_file.web_app_wrangler_production[0].content, "CONTROL_PLANE_WORKER") &&
+      !module.control_plane_worker.migration_present
+    )
+    error_message = "Phase two must enable the Durable Object and web service bindings without replaying the initial migration."
+  }
+}
+
+run "phase_one_omits_configured_service_bindings" {
+  command = plan
+
+  variables {
+    enable_slack_bot          = true
+    slack_bot_token           = "test-slack-token"
+    slack_signing_secret      = "test-slack-signing-secret"
+    slack_app_id              = "A123"
+    slack_team_id             = "T123"
+    slack_allowed_user_ids    = "U123"
+    slack_allowed_channel_ids = "C123"
+  }
+
+  assert {
+    condition = (
+      length(module.control_plane_worker.durable_object_binding_names) == 0 &&
+      length(module.control_plane_worker.service_binding_names) == 0 &&
+      module.control_plane_worker.migration_present &&
+      !strcontains(local_file.web_app_wrangler_production[0].content, "CONTROL_PLANE_WORKER")
+    )
+    error_message = "Phase one must omit configured service targets until the binding gates are enabled."
+  }
+}
+
+run "reject_blank_app_name" {
+  command = plan
+
+  variables {
+    app_name = "   "
+  }
+
+  expect_failures = [var.app_name]
+}
+
+run "reject_empty_deployment_name" {
+  command = plan
+
+  variables {
+    deployment_name = ""
+  }
+
+  expect_failures = [var.deployment_name]
+}
+
+run "reject_unsafe_deployment_name" {
+  command = plan
+
+  variables {
+    deployment_name = "CS/production"
+  }
+
+  expect_failures = [var.deployment_name]
+}
+
+run "reject_overlong_deployment_name" {
+  command = plan
+
+  variables {
+    deployment_name = "this-deployment-name-is-more-than-thirty-six-characters"
+  }
+
+  expect_failures = [var.deployment_name]
 }
 
 run "terraform_generated_provider_account_key" {

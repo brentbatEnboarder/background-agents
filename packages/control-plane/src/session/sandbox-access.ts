@@ -69,6 +69,7 @@ export async function decryptStoredAccessValue(
 export interface SandboxDashboardSettings {
   sandboxProvider: string | undefined;
   modalWorkspace: string | undefined;
+  modalAppName: string | undefined;
   modalEnvironment: string | undefined;
 }
 
@@ -83,6 +84,7 @@ export function resolveSandboxDashboardUrl(
   if (resolveSandboxBackendName(settings.sandboxProvider) !== "modal") return null;
   return buildModalSandboxDashboardUrl({
     workspace: settings.modalWorkspace,
+    modalAppName: settings.modalAppName,
     modalEnvironment: settings.modalEnvironment,
     providerObjectId,
   });

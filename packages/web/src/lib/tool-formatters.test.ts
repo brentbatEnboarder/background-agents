@@ -53,9 +53,9 @@ describe("formatToolCall summaries", () => {
   });
 
   it("renders skill calls with the skill name", () => {
-    expect(formatToolCall(toolCall("skill", { name: "visual-verification" }))).toMatchObject({
+    expect(formatToolCall(toolCall("skill", { name: "release-check" }))).toMatchObject({
       toolName: "skill",
-      summary: '"visual-verification"',
+      summary: '"release-check"',
     });
   });
 
@@ -110,9 +110,9 @@ describe("formatToolCall Claude Agent tool names", () => {
       toolName: "TodoWrite",
       summary: "2 items",
     });
-    expect(formatToolCall(toolCall("Skill", { skill: "visual-verification" }))).toMatchObject({
+    expect(formatToolCall(toolCall("Skill", { skill: "release-check" }))).toMatchObject({
       toolName: "skill",
-      summary: '"visual-verification"',
+      summary: '"release-check"',
     });
   });
 

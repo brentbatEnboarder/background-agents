@@ -27,23 +27,8 @@ vercel_sandbox_project_id = "prj_..."
 # vercel_snapshot_expiration_ms = 0
 ```
 
-For GitHub Actions-based deployment, configure the matching repository secrets:
-
-```text
-SANDBOX_PROVIDER=vercel
-VERCEL_SANDBOX_TOKEN
-VERCEL_SANDBOX_PROJECT_ID
-VERCEL_SANDBOX_TEAM_ID # optional
-```
-
-Optional GitHub Actions runtime settings:
-
-```text
-VERCEL_BASE_SNAPSHOT_ID # optional manual override; skips Terraform-managed snapshot builds
-VERCEL_SANDBOX_RUNTIME=node24
-VERCEL_SNAPSHOT_EXPIRATION_MS=0
-VERCEL_SANDBOX_API_BASE_URL # optional advanced Sandbox API override
-```
+Keep these values in the approved operator credential and configuration stores. The checked-in
+GitHub Actions workflows do not accept provider credentials or deploy infrastructure.
 
 `VERCEL_SANDBOX_API_BASE_URL` is honored by Terraform and the control plane for advanced testing
 against a non-default Sandbox API endpoint. Normal deployments should leave it unset.
