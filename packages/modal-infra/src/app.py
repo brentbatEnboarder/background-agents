@@ -13,7 +13,13 @@ import modal
 
 import sandbox_runtime
 
-from .app_config import APP_NAME, GITHUB_APP_SECRET_NAME, INTERNAL_API_SECRET_NAME, LLM_SECRET_NAME
+from .app_config import (
+    APP_NAME,
+    DEPLOYMENT_NAME,
+    GITHUB_APP_SECRET_NAME,
+    INTERNAL_API_SECRET_NAME,
+    LLM_SECRET_NAME,
+)
 from .images.base import deployed_image_environment
 from .log_config import get_logger
 
@@ -38,7 +44,7 @@ function_image = (
     )
     # Bundle sandbox_runtime so modal-infra shims can import from it at runtime
     .add_local_dir(str(_SANDBOX_RUNTIME_DIR), remote_path="/root/sandbox_runtime", copy=True)
-    .env(deployed_image_environment())
+    .env(deployed_image_environment() | {"OPEN_INSPECT_DEPLOYMENT_NAME": DEPLOYMENT_NAME})
 )
 
 # Deployment-wide LLM API keys, injected into sandboxes but never stored in
