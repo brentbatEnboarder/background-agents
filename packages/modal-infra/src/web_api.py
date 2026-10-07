@@ -17,14 +17,16 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, Self, cast
 
 from fastapi import Header, HTTPException
 from modal import fastapi_endpoint
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from sandbox_runtime.auth import AuthConfigurationError, verify_internal_token
+from sandbox_runtime.constants import DEFAULT_SANDBOX_TIMEOUT_SECONDS
 from sandbox_runtime.repo_config import RepoConfigError, parse_repositories
+from sandbox_runtime.types import SessionConfig
 
 from .app import (
     app,
@@ -331,8 +333,8 @@ def _normalize_optional_repository_context(
 
 
 def _session_config_from_create_request(
-    request: dict, *, repo_owner: str | None, repo_name: str | None
-):
+    request: dict[str, object], *, repo_owner: str | None, repo_name: str | None
+) -> SessionConfig:
     """Build the create-path SessionConfig from the flat wire request.
 
     Create is a lossy reconstruction — the manager re-serializes this typed
@@ -342,8 +344,6 @@ def _session_config_from_create_request(
     the SessionConfig change, not another line here. repo_owner/repo_name
     are set from the normalized pair, never the raw request.
     """
-    from .sandbox import SessionConfig
-
     fields = {
         name: request[name]
         for name in SessionConfig.model_fields
@@ -360,13 +360,13 @@ def _session_config_from_create_request(
 )
 @fastapi_endpoint(method="POST")
 async def api_create_sandbox(
-    request: dict,
+    request: dict[str, object],
     authorization: str | None = Header(None),
     x_trace_id: str | None = Header(None),
     x_request_id: str | None = Header(None),
     x_session_id: str | None = Header(None),
     x_sandbox_id: str | None = Header(None),
-) -> dict:
+) -> dict[str, object]:
     """
     HTTP endpoint to create a sandbox.
 
@@ -396,7 +396,6 @@ async def api_create_sandbox(
         require_valid_control_plane_url(parsed_request.control_plane_url)
 
         from .sandbox.manager import (
-            DEFAULT_SANDBOX_TIMEOUT_SECONDS,
             DEFAULT_VNC_ENABLED,
             SandboxConfig,
             SandboxManager,
@@ -455,7 +454,7 @@ async def api_create_sandbox(
 
 @app.function(image=function_image)
 @fastapi_endpoint(method="GET")
-def api_health() -> dict:
+def api_health() -> dict[str, object]:
     """Health check endpoint. Does not require authentication."""
     return {"success": True, "data": {"status": "healthy", "service": "open-inspect-modal"}}
 
@@ -463,13 +462,13 @@ def api_health() -> dict:
 @app.function(image=function_image, secrets=[internal_api_secret])
 @fastapi_endpoint(method="POST")
 async def api_snapshot_sandbox(
-    request: dict,
+    request: dict[str, object],
     authorization: str | None = Header(None),
     x_trace_id: str | None = Header(None),
     x_request_id: str | None = Header(None),
     x_session_id: str | None = Header(None),
     x_sandbox_id: str | None = Header(None),
-) -> dict:
+) -> dict[str, object]:
     """
     Take a filesystem snapshot of a running sandbox using Modal's native API.
 
@@ -501,7 +500,7 @@ async def api_snapshot_sandbox(
         session_id=x_session_id,
         sandbox_id=x_sandbox_id,
     ) as execution:
-        sandbox_id = request.get("sandbox_id")
+        sandbox_id = cast("str | None", request.get("sandbox_id"))
         execution.log_fields["sandbox_id"] = x_sandbox_id or sandbox_id
         if not sandbox_id:
             raise HTTPException(status_code=400, detail="sandbox_id is required")
@@ -532,7 +531,7 @@ async def api_snapshot_build_sandbox(
     authorization: str | None = Header(None),
     x_trace_id: str | None = Header(None),
     x_request_id: str | None = Header(None),
-) -> dict:
+) -> dict[str, object]:
     """Snapshot the exact provider session bound to an image build."""
     async with _execute_endpoint(
         endpoint_name="api_snapshot_build_sandbox",
@@ -571,13 +570,13 @@ async def api_snapshot_build_sandbox(
 @app.function(image=function_image, secrets=[github_app_secrets, internal_api_secret])
 @fastapi_endpoint(method="POST")
 async def api_restore_sandbox(
-    request: dict,
+    request: dict[str, object],
     authorization: str | None = Header(None),
     x_trace_id: str | None = Header(None),
     x_request_id: str | None = Header(None),
     x_session_id: str | None = Header(None),
     x_sandbox_id: str | None = Header(None),
-) -> dict:
+) -> dict[str, object]:
     """
     Create a new sandbox from a filesystem snapshot.
 
@@ -623,7 +622,6 @@ async def api_restore_sandbox(
         require_valid_control_plane_url(parsed_request.control_plane_url)
 
         from .sandbox.manager import (
-            DEFAULT_SANDBOX_TIMEOUT_SECONDS,
             DEFAULT_VNC_ENABLED,
             SandboxManager,
         )
@@ -685,7 +683,7 @@ async def api_create_build_sandbox(
     authorization: str | None = Header(None),
     x_trace_id: str | None = Header(None),
     x_request_id: str | None = Header(None),
-) -> dict:
+) -> dict[str, object]:
     """Create a dormant provider-session build sandbox."""
     async with _execute_endpoint(
         endpoint_name="api_create_build_sandbox",
@@ -760,7 +758,7 @@ async def api_start_build_sandbox(
     authorization: str | None = Header(None),
     x_trace_id: str | None = Header(None),
     x_request_id: str | None = Header(None),
-) -> dict:
+) -> dict[str, object]:
     """Start a build only after its provider session is bound in D1."""
     async with _execute_endpoint(
         endpoint_name="api_start_build_sandbox",
@@ -791,7 +789,7 @@ async def api_terminate_build_sandbox(
     authorization: str | None = Header(None),
     x_trace_id: str | None = Header(None),
     x_request_id: str | None = Header(None),
-) -> dict:
+) -> dict[str, object]:
     """Terminate the exactly tagged provider-session build sandbox."""
     async with _execute_endpoint(
         endpoint_name="api_terminate_build_sandbox",

@@ -1,16 +1,12 @@
-# Customer Success Cloudflare R2 Backend Credentials
-# Copy this file to backend.tfvars and fill in your values.
-# NEVER commit backend.tfvars to source control!
+# Customer Success Cloudflare R2 Backend Configuration
+# Supply credentials through AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY instead
+# of this file; Terraform caches backend arguments in local metadata and plans.
 #
-# Usage: terraform init -backend-config=backend.tfvars
+# Prefer AWS_ENDPOINT_URL_S3 and AWS_REGION=auto, then run:
+# terraform init -reconfigure
 
-# CS-only R2 API Token credentials for bucket open-inspect-cs-terraform-state
-# (create at Cloudflare Dashboard → R2 → Manage R2 API Tokens)
-access_key = ""
-secret_key = ""
-
-# R2 endpoint (replace with your Cloudflare account ID)
-# Find your account ID in the Cloudflare dashboard URL or account overview
+# If an endpoint backend argument is unavoidable, this file may contain only the
+# non-secret endpoint. Keep credentials in the environment.
 endpoints = {
   s3 = "https://<CLOUDFLARE_ACCOUNT_ID>.r2.cloudflarestorage.com"
 }

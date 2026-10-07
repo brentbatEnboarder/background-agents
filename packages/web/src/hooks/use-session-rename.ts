@@ -38,11 +38,6 @@ function applyTitleToSessionCaches(
   ]);
 }
 
-function revalidateSessionCaches(mutate: SessionCacheMutator) {
-  void mutate(isSessionListKey).catch(() => undefined);
-  void mutate(isSessionInboxKey).catch(() => undefined);
-}
-
 interface RenameOwner {
   latestRequestId: number;
   confirmedTitle?: string | null;
@@ -190,7 +185,6 @@ export function useSessionRename({
             if (owner.authoritativeSubscribers === 0 || authoritativeTitleRef.current === title) {
               publishOptimisticTitle(owner, undefined);
             }
-            revalidateSessionCaches(mutate);
           }
           deleteIdleOwner(sessionId, owner);
           return true;
@@ -206,7 +200,6 @@ export function useSessionRename({
             owner.confirmedTitle = title;
             await applyTitleToSessionCaches(mutate, sessionId, title).catch(() => undefined);
             publishOptimisticTitle(owner, undefined);
-            revalidateSessionCaches(mutate);
             deleteIdleOwner(sessionId, owner);
             return true;
           }

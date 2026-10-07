@@ -61,7 +61,7 @@ class ModalBuildSessionService:
         build_id: str,
         scope_kind: str,
         scope_id: str,
-        repositories: list[dict],
+        repositories: list[dict[str, str]],
         callback_url: str,
         failure_callback_url: str,
         clone_token: str = "",

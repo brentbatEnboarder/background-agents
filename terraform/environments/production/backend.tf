@@ -4,18 +4,10 @@
 # Prerequisites:
 # 1. Create R2 bucket: wrangler r2 bucket create open-inspect-cs-terraform-state
 # 2. Generate a CS-only R2 API token with read/write permissions for that bucket
-# 3. Initialize with:
-#    terraform init \
-#      -backend-config="access_key=<R2_ACCESS_KEY_ID>" \
-#      -backend-config="secret_key=<R2_SECRET_ACCESS_KEY>" \
-#      -backend-config="endpoints={s3=\"https://<CLOUDFLARE_ACCOUNT_ID>.r2.cloudflarestorage.com\"}"
-#
-# Or create a backend.tfvars file (gitignored) with:
-#   access_key = "your-r2-access-key-id"
-#   secret_key = "your-r2-secret-access-key"
-#   endpoints  = { s3 = "https://<account-id>.r2.cloudflarestorage.com" }
-#
-# Then run: terraform init -backend-config=backend.tfvars
+# 3. Export the CS-only credentials as AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.
+# 4. Export AWS_ENDPOINT_URL_S3 for the account R2 endpoint and AWS_REGION=auto.
+# 5. Run terraform init -reconfigure. Do not pass credentials through -backend-config;
+#    Terraform caches backend arguments in local metadata and saved plans.
 
 terraform {
   backend "s3" {
@@ -23,10 +15,12 @@ terraform {
     key    = "production/terraform.tfstate"
     region = "auto"
 
-    # All sensitive/account-specific values passed via -backend-config
-    # endpoints = { s3 = "https://<ACCOUNT_ID>.r2.cloudflarestorage.com" }
-    # access_key = "..."
-    # secret_key = "..."
+    # R2 supports the conditional object operations used by S3 lockfiles. This must
+    # still be verified against the CS bucket before the first provider-backed plan.
+    use_lockfile = true
+
+    # All sensitive/account-specific values are supplied through AWS_* environment
+    # variables so Terraform does not persist credentials as backend arguments.
 
     # Required for R2 compatibility
     skip_credentials_validation = true

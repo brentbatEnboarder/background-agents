@@ -25,11 +25,14 @@ def resolve_clone_token() -> str | None:
         installation_id = os.environ.get("GITHUB_APP_INSTALLATION_ID")
 
         if app_id and private_key and installation_id:
-            return generate_installation_token(
+            github_token: object = generate_installation_token(
                 app_id=app_id,
                 private_key=private_key,
                 installation_id=installation_id,
             )
+            if not isinstance(github_token, str):
+                raise TypeError("GitHub installation token must be a string")
+            return github_token
     except Exception as e:
         log.warn("github.token_error", exc=e)
 

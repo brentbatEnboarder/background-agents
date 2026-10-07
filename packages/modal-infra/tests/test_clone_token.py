@@ -75,3 +75,15 @@ def test_resolve_clone_token_returns_none_when_github_generation_fails(monkeypat
     monkeypatch.setattr("sandbox_runtime.auth.generate_installation_token", raise_from_generate)
 
     assert resolve_clone_token() is None
+
+
+def test_resolve_clone_token_returns_none_for_non_string_github_token(monkeypatch):
+    monkeypatch.setenv("GITHUB_APP_ID", "123")
+    monkeypatch.setenv("GITHUB_APP_PRIVATE_KEY", "private-key")
+    monkeypatch.setenv("GITHUB_APP_INSTALLATION_ID", "456")
+    monkeypatch.setattr(
+        "sandbox_runtime.auth.generate_installation_token",
+        lambda **_kwargs: {"unexpected": "token"},
+    )
+
+    assert resolve_clone_token() is None

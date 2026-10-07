@@ -66,7 +66,7 @@ def _has_repository(repo_owner: str | None, repo_name: str | None) -> bool:
     return has_owner
 
 
-def _resource_kwargs(settings: dict[str, Any] | None) -> dict:
+def _resource_kwargs(settings: dict[str, Any] | None) -> dict[str, Any]:
     """Map sandbox settings to Modal resource kwargs.
 
     `cpuCores` -> Modal `cpu` (cores, fractional allowed), `memoryMib` -> Modal
@@ -76,7 +76,7 @@ def _resource_kwargs(settings: dict[str, Any] | None) -> dict:
     if not settings:
         return {}
 
-    kwargs: dict = {}
+    kwargs: dict[str, Any] = {}
 
     cpu_cores = settings.get("cpuCores")
     if cpu_cores is not None:
@@ -217,7 +217,7 @@ class SandboxManager:
         return resolved
 
     @staticmethod
-    def _validate_ports(raw: list) -> list[int]:
+    def _validate_ports(raw: list[object]) -> list[int]:
         """Validate and sanitize tunnel ports: must be int, 1-65535, max MAX_TUNNEL_PORTS."""
         ports: list[int] = []
         for p in raw:
