@@ -12,6 +12,8 @@ describe("slack notify tool envelope schema", () => {
       truncated: false,
       strippedBroadcasts: false,
       mentionsModified: false,
+      attachmentId: null,
+      threadMapping: "mapped",
     });
 
     expect(result.success).toBe(true);

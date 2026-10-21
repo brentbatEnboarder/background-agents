@@ -55,6 +55,8 @@ export const slackNotifySuccessOutputSchema = z.object({
   truncated: z.boolean(),
   strippedBroadcasts: z.boolean(),
   mentionsModified: z.boolean(),
+  attachmentId: z.string().nullable(),
+  threadMapping: z.enum(["mapped", "not-requested", "failed"]),
 });
 
 export type SlackNotifySuccessOutput = z.infer<typeof slackNotifySuccessOutputSchema>;

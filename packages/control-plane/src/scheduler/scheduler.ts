@@ -188,6 +188,7 @@ export interface SchedulerEventResult {
   skipped: number;
   steered: number;
   deduplicated?: number;
+  startedRuns?: Array<{ invocationId: string; runId: string; sessionId: string }>;
 }
 
 export interface SchedulerTriggerResult {
@@ -959,7 +960,10 @@ export class Scheduler {
   // ─── Event handler ───────────────────────────────────────────────────────
 
   /** Match an inbound event to authorized automations and start or steer their invocations. */
-  async event(event: AutomationEvent): Promise<SchedulerEventResult> {
+  async event(
+    event: AutomationEvent,
+    options: { includeStartedRuns?: boolean } = {}
+  ): Promise<SchedulerEventResult> {
     const store = new AutomationStore(this.db);
 
     // 1. Find matching automations
@@ -1035,6 +1039,7 @@ export class Scheduler {
     let deduplicated = 0;
     // Follow-ups routed into an already-active thread's session (slack steering).
     let steered = 0;
+    const startedRuns: NonNullable<SchedulerEventResult["startedRuns"]> = [];
     // Surface at most one concurrency-skip ephemeral per event, even when
     // several automations watch the same thread and all skip.
     let concurrencySkipped = false;
@@ -1133,6 +1138,21 @@ export class Scheduler {
           if (result.launched > 0) {
             triggered++;
           }
+          if (options.includeStartedRuns) {
+            startedRuns.push(
+              ...result.runs.flatMap((run) =>
+                run.session_id
+                  ? [
+                      {
+                        invocationId: result.invocationId,
+                        runId: run.id,
+                        sessionId: run.session_id,
+                      },
+                    ]
+                  : []
+              )
+            );
+          }
           break;
         case "skipped":
           if (event.source === "webhook" && event.triggerKey.startsWith("webhook:idem:")) {
@@ -1181,6 +1201,7 @@ export class Scheduler {
       skipped,
       steered,
       ...(deduplicated > 0 ? { deduplicated } : {}),
+      ...(options.includeStartedRuns ? { startedRuns } : {}),
     };
   }
 

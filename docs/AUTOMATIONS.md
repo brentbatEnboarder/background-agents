@@ -213,6 +213,32 @@ concurrency protection.
 | `413`  | Payload too large                                |
 | `415`  | `Content-Type` was not `application/json`        |
 
+### Immutable HTML Artifact Delivery
+
+A webhook automation with a fixed Slack delivery channel may use the stricter artifact-delivery
+interface at `POST /webhooks/automation/<automation-id>/artifact-delivery`. This interface is for an
+application that has already prepared and approved an immutable HTML report. It is not a generic
+file upload route.
+
+The authenticated request supplies an idempotency key, evidence provenance, the expected SHA-256, a
+bounded normalized evidence context, a Slack summary, and one complete HTML document up to 5 MiB.
+Open-Inspect then:
+
+1. durably claims the idempotency key without storing the report bytes;
+2. creates exactly one automation session with the normalized evidence context;
+3. posts exactly one top-level message to the automation's server-side Slack destination;
+4. attaches the verified HTML file to that same message;
+5. maps the parent thread to the created session; and
+6. returns a durable delivery receipt with invocation, session, parent, attachment, and mapping
+   state.
+
+Retries with the same immutable report, summary and evidence context return the existing receipt and
+never post another parent. A conflicting request under the same idempotency key is rejected.
+Raw-text-shaped evidence fields are rejected by the platform rather than relying on the caller to
+omit them. An ambiguous launch or Slack outcome is recorded as `unknown` and must not be retried
+automatically. The session receives normalized evidence, not source credentials or raw provider
+records, and its initial context directs it not to redeliver the platform-posted report.
+
 ---
 
 ## GitHub Event Triggers

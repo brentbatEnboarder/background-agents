@@ -1073,6 +1073,7 @@ describe("thread-to-session mapping", () => {
       SLACK_KV,
     } as unknown as Partial<Env>);
     expect(response.status).toBe(200);
+    await expect(response.clone().json()).resolves.toMatchObject({ threadMapping: "mapped" });
     expect(SLACK_KV.put).toHaveBeenCalledTimes(1);
     const [key, value, options] = SLACK_KV.put.mock.calls[0]!;
     expect(key).toMatch(/^thread:/);
@@ -1119,7 +1120,7 @@ describe("thread-to-session mapping", () => {
   });
 
   it("still delivers when the mapping cannot be written", async () => {
-    // The message is already posted by then. Continuity is a convenience; delivery is not.
+    // The message is already posted by then. Surface failed continuity so strict callers can stop.
     seedActiveSession();
     mockSlackResponse({ body: { ok: true, channel: "C1", ts: "999.000" } });
     mockSlackResponse({ body: { ok: true, permalink: "https://slack.example/p" } });
@@ -1129,6 +1130,7 @@ describe("thread-to-session mapping", () => {
       SLACK_KV,
     } as unknown as Partial<Env>);
     expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ threadMapping: "failed" });
   });
 
   it("does nothing when the binding is absent, so it ships before the binding exists", async () => {
@@ -1137,5 +1139,6 @@ describe("thread-to-session mapping", () => {
     mockSlackResponse({ body: { ok: true, permalink: "https://slack.example/p" } });
     const response = await callHandler({ channel: "C1", text: "weekly report" });
     expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ threadMapping: "failed" });
   });
 });

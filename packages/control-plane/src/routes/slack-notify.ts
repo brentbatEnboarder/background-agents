@@ -239,6 +239,10 @@ export async function handleSlackNotify(
 
   const channelId = post.channel;
   const messageTs = post.ts;
+  let threadMapping: SlackNotifySuccessOutput["threadMapping"] = effective.threadTs
+    ? "not-requested"
+    : "failed";
+  let attachmentId: string | null = null;
 
   // A top-level post starts a thread, so record which session owns it. Without this a reply to an
   // automation-delivered report reaches the Slack bot's `handleThreadContinuation`, finds no mapping
@@ -272,12 +276,19 @@ export async function handleSlackNotify(
           JSON.stringify(threadSession),
           { expirationTtl: THREAD_SESSION_TTL_SECONDS }
         );
+        threadMapping = "mapped";
       }
     } catch {
-      // Continuity is a convenience; delivery is not.
+      threadMapping = "failed";
     }
   }
   if (parsed.attachment) {
+    const partial = () => ({
+      channelId,
+      messageTs,
+      attachmentId,
+      threadMapping,
+    });
     const uploadUrl = await getExternalUploadUrl(token, {
       filename: parsed.attachment.filename,
       length: parsed.attachment.bytes.byteLength,
@@ -286,7 +297,7 @@ export async function handleSlackNotify(
     if (!uploadUrl.ok) {
       const reasonCode = mapSlackError(uploadUrl.error);
       logDenial(sessionId, ctx, effective, audit, reasonCode, uploadUrl.retryAfter);
-      return failureResponse(reasonCode, uploadUrl.error, uploadUrl.retryAfter);
+      return failureResponse(reasonCode, uploadUrl.error, uploadUrl.retryAfter, partial());
     }
     const upload = await uploadToExternalUrl(
       uploadUrl.upload_url,
@@ -297,7 +308,7 @@ export async function handleSlackNotify(
     if (!upload.ok) {
       const reasonCode = mapSlackError(upload.error);
       logDenial(sessionId, ctx, effective, audit, reasonCode, upload.retryAfter);
-      return failureResponse(reasonCode, upload.error, upload.retryAfter);
+      return failureResponse(reasonCode, upload.error, upload.retryAfter, partial());
     }
     const complete = await completeExternalUpload(token, {
       files: [{ id: uploadUrl.file_id, title: parsed.attachment.filename }],
@@ -306,12 +317,18 @@ export async function handleSlackNotify(
     if (!complete.ok) {
       const reasonCode = mapSlackError(complete.error);
       logDenial(sessionId, ctx, effective, audit, reasonCode, complete.retryAfter);
-      return failureResponse(reasonCode, complete.error, complete.retryAfter);
+      return failureResponse(reasonCode, complete.error, complete.retryAfter, partial());
     }
     if (!complete.files.some(({ id }) => id === uploadUrl.file_id)) {
       logDenial(sessionId, ctx, effective, audit, "slack_api_error");
-      return failureResponse("slack_api_error", "Slack did not confirm the uploaded file.");
+      return failureResponse(
+        "slack_api_error",
+        "Slack did not confirm the uploaded file.",
+        undefined,
+        partial()
+      );
     }
+    attachmentId = uploadUrl.file_id;
     const update = await updateMessage(token, channelId, messageTs, sanitized.text, {
       blocks,
       fileIds: [uploadUrl.file_id],
@@ -320,7 +337,7 @@ export async function handleSlackNotify(
     if (!update.ok) {
       const reasonCode = mapSlackError(update.error);
       logDenial(sessionId, ctx, effective, audit, reasonCode, update.retryAfter);
-      return failureResponse(reasonCode, update.error, update.retryAfter);
+      return failureResponse(reasonCode, update.error, update.retryAfter, partial());
     }
   }
   const permalinkResp = await getPermalink(token, channelId, messageTs, { signal: request.signal });
@@ -338,6 +355,8 @@ export async function handleSlackNotify(
     truncated: sanitized.truncated,
     strippedBroadcasts: sanitized.strippedBroadcasts,
     mentionsModified: sanitized.mentionsModified,
+    attachmentId,
+    threadMapping,
   };
 
   logger.info("Slack notification posted", {
@@ -564,11 +583,18 @@ function mapSlackError(slackError: string | undefined): SlackWireDenialReason {
 function failureResponse(
   reason: SlackWireDenialReason,
   message: string | undefined,
-  retryAfter?: number
+  retryAfter?: number,
+  partialDelivery?: {
+    channelId: string;
+    messageTs: string;
+    attachmentId: string | null;
+    threadMapping: SlackNotifySuccessOutput["threadMapping"];
+  }
 ): Response {
   const body: Record<string, unknown> = { error: reason };
   if (message) body.message = message;
   if (typeof retryAfter === "number") body.retryAfter = retryAfter;
+  if (partialDelivery) body.partialDelivery = partialDelivery;
   return json(body, SLACK_DENIAL_STATUS[reason]);
 }
 
