@@ -417,6 +417,18 @@ sessionRuntimeProxyRoutes.post(
     )
 );
 sessionRuntimeProxyRoutes.get(
+  "/sessions/:id/active-slack-request-context",
+  admit({ ...SCM_AGNOSTIC_SANDBOX_ROUTE, authorization: NO_AUTHORIZATION }),
+  (c) =>
+    dispatchSession(
+      c,
+      simpleProxy({
+        internalPath: SessionInternalPaths.activeSlackRequestContext,
+        runtimeMethod: "GET",
+      })
+    )
+);
+sessionRuntimeProxyRoutes.get(
   "/sessions/:id/tunnel-urls",
   admit({
     ...SCM_AGNOSTIC_SANDBOX_FALLBACK_ROUTE,

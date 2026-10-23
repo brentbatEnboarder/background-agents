@@ -133,6 +133,39 @@ describe("ChildSessionsHandler", () => {
     });
   });
 
+  describe("getActiveSlackRequestContext", () => {
+    it("binds the active Slack author to the active callback destination", async () => {
+      const { handler, repository } = createHandler();
+      repository.getParticipantById.mockReturnValue(
+        createParticipant({ user_id: "slack:U0TRUSTED1" })
+      );
+      repository.getProcessingMessage.mockReturnValue({ id: "message-1" });
+      repository.getMessageCallbackContext.mockReturnValue({
+        source: "slack",
+        callback_context: JSON.stringify({
+          source: "slack",
+          channel: "C0TRUSTED1",
+          threadTs: "111.222",
+          repoFullName: "acme/repo",
+          model: "anthropic/claude-haiku-4-5",
+        }),
+      });
+
+      const response = handler.getActiveSlackRequestContext();
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        requesterUserId: "U0TRUSTED1",
+        destinationId: "C0TRUSTED1",
+        threadTs: "111.222",
+      });
+    });
+
+    it("rejects a non-Slack active author", () => {
+      const { handler } = createHandler();
+      expect(handler.getActiveSlackRequestContext().status).toBe(403);
+    });
+  });
+
   describe("parentPrompt", () => {
     function request(body: unknown): Request {
       const withAuthor =
