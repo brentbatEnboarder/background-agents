@@ -55,6 +55,30 @@ function toActivePromptAuthor(participant: ParticipantRow): ActivePromptAuthor {
   };
 }
 
+function resolveActiveSlackContext(
+  messageRepository: MessageRepository
+): { channel: string; threadTs: string } | Response {
+  const processing = messageRepository.getProcessingMessage();
+  if (!processing) {
+    return Response.json({ error: "No active prompt" }, { status: 409 });
+  }
+  const message = messageRepository.getMessageCallbackContext(processing.id);
+  if (message?.source !== "slack" || !message.callback_context) {
+    return Response.json({ error: "Active prompt is not Slack-originated" }, { status: 403 });
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(message.callback_context);
+  } catch {
+    return Response.json({ error: "Invalid Slack callback context" }, { status: 403 });
+  }
+  const context = slackCallbackContextSchema.safeParse(raw);
+  if (!context.success || !context.data.channel || !context.data.threadTs) {
+    return Response.json({ error: "Invalid Slack callback context" }, { status: 403 });
+  }
+  return { channel: context.data.channel, threadTs: context.data.threadTs };
+}
+
 /**
  * HTTP boundary for the parent/child session endpoints: spawn context and
  * prompt-author reads for child spawning, and the parent-prompt/status-update
@@ -126,27 +150,25 @@ export class ChildSessionsHandler {
   }
 
   getActiveSlackContext(): Response {
-    const processing = this.messageRepository.getProcessingMessage();
-    if (!processing) {
-      return Response.json({ error: "No active prompt" }, { status: 409 });
+    const context = resolveActiveSlackContext(this.messageRepository);
+    return context instanceof Response ? context : Response.json(context);
+  }
+
+  getActiveSlackRequestContext(): Response {
+    const author = resolvePromptAuthorParticipant(
+      this.messageRepository,
+      this.participantRepository
+    );
+    if (author instanceof Response) return author;
+    if (!author.user_id.startsWith("slack:")) {
+      return Response.json({ error: "Active prompt author is not a Slack user" }, { status: 403 });
     }
-    const message = this.messageRepository.getMessageCallbackContext(processing.id);
-    if (message?.source !== "slack" || !message.callback_context) {
-      return Response.json({ error: "Active prompt is not Slack-originated" }, { status: 403 });
-    }
-    let raw: unknown;
-    try {
-      raw = JSON.parse(message.callback_context);
-    } catch {
-      return Response.json({ error: "Invalid Slack callback context" }, { status: 403 });
-    }
-    const context = slackCallbackContextSchema.safeParse(raw);
-    if (!context.success || !context.data.channel || !context.data.threadTs) {
-      return Response.json({ error: "Invalid Slack callback context" }, { status: 403 });
-    }
+    const context = resolveActiveSlackContext(this.messageRepository);
+    if (context instanceof Response) return context;
     return Response.json({
-      channel: context.data.channel,
-      threadTs: context.data.threadTs,
+      requesterUserId: author.user_id.slice("slack:".length),
+      destinationId: context.channel,
+      threadTs: context.threadTs,
     });
   }
 

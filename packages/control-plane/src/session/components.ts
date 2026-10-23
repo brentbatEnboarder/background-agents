@@ -815,6 +815,7 @@ export function createSessionRuntime(platform: SessionPlatform, env: Env): Sessi
     spawnContext: () => childSessionsHandler.getSpawnContext(),
     activePromptAuthor: () => childSessionsHandler.getActivePromptAuthor(),
     activeSlackContext: () => childSessionsHandler.getActiveSlackContext(),
+    activeSlackRequestContext: () => childSessionsHandler.getActiveSlackRequestContext(),
     childSummary: (_request, url) => childSummaryHandler.getChildSummary(url),
     parentPrompt: (request) => childSessionsHandler.parentPrompt(request),
     cancel: () => sessionLifecycleHandler.cancel(),

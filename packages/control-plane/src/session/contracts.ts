@@ -45,6 +45,7 @@ export const SessionInternalPaths = {
   spawnContext: "/internal/spawn-context",
   activePromptAuthor: "/internal/active-prompt-author",
   activeSlackContext: "/internal/active-slack-context",
+  activeSlackRequestContext: "/internal/active-slack-request-context",
   childSummary: "/internal/child-summary",
   parentPrompt: "/internal/parent-prompt",
   updateTitle: "/internal/update-title",

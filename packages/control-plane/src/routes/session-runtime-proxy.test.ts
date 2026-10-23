@@ -154,6 +154,13 @@ describe("session runtime proxy routes", () => {
       init: { headers: SANDBOX_TOKEN_HEADERS },
       sandbox: true,
     },
+    {
+      method: "GET",
+      path: "/sessions/session-1/active-slack-request-context",
+      internal: "activeSlackRequestContext",
+      init: { headers: SANDBOX_TOKEN_HEADERS },
+      sandbox: true,
+    },
     { method: "GET", path: "/sessions/session-1/tunnel-urls", internal: "tunnelUrls" },
     {
       method: "PATCH",
