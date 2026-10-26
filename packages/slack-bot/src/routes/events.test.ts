@@ -99,6 +99,47 @@ describe("POST /events deduplication", () => {
     vi.restoreAllMocks();
   });
 
+  it("dispatches concurrent deliveries of the same Slack event only once", async () => {
+    let releaseRead!: () => void;
+    let markReadStarted!: () => void;
+    const readStarted = new Promise<void>((resolve) => {
+      markReadStarted = resolve;
+    });
+    const releaseFirstRead = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const kv = {
+      get: vi.fn(async (key: string) => {
+        if (!key.startsWith("event:")) return null;
+        markReadStarted();
+        await releaseFirstRead;
+        return null;
+      }),
+      put: vi.fn().mockResolvedValue(undefined),
+    };
+    const env = {
+      ...makeEnv("get"),
+      SLACK_KV: kv,
+    } as unknown as Env;
+    const firstContext = makeCtx();
+    const secondContext = makeCtx();
+
+    const firstResponse = eventRoutes.fetch(eventRequest(), env, firstContext);
+    await readStarted;
+    const secondResponse = eventRoutes.fetch(eventRequest(), env, secondContext);
+    await Promise.resolve();
+    releaseRead();
+    const responses = await Promise.all([firstResponse, secondResponse]);
+    await Promise.all(
+      [firstContext, secondContext].flatMap((context) =>
+        context.waitUntil.mock.calls.map(([promise]: [Promise<void>]) => promise)
+      )
+    );
+
+    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    expect(mockHandleSlackEvent).toHaveBeenCalledOnce();
+  });
+
   it.each(["get", "put"] as const)(
     "acknowledges, logs context, and dispatches when dedupe KV %s fails",
     async (kvOperation) => {

@@ -10,7 +10,11 @@ import type {
   SlackContextBlock,
   SlackSectionBlock,
 } from "../slack-blocks";
-import { escapeMrkdwnText, splitIntoSlackSections } from "@open-inspect/shared/slack";
+import {
+  convertMarkdownToMrkdwn,
+  escapeMrkdwnText,
+  splitIntoSlackSections,
+} from "@open-inspect/shared/slack";
 import type { ManualPullRequestArtifactMetadata } from "@open-inspect/shared/types/artifacts";
 
 type CompletionSlackBlock = SlackSectionBlock | SlackContextBlock | SlackActionsBlock;
@@ -40,7 +44,7 @@ export function buildCompletionBlocks(
   const blocks: CompletionSlackBlock[] = [];
 
   // 1. Response text, split across as many section blocks as it needs
-  const sections = splitIntoSlackSections(response.textContent);
+  const sections = splitIntoSlackSections(convertMarkdownToMrkdwn(response.textContent));
   if (sections.length === 0) {
     blocks.push({ type: "section", text: { type: "mrkdwn", text: "_Agent completed._" } });
   } else {

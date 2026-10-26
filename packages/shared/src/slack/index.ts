@@ -43,6 +43,7 @@ export type { ControlPlaneSlackChannelsResponse, SlackChannelListing } from "./c
 export {
   applyMentionPolicy,
   allowExactUserMention,
+  convertMarkdownToMrkdwn,
   escapeMrkdwnText,
   resolveDeliveryMentionPlaceholder,
   sanitizeAgentText,
