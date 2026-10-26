@@ -30,6 +30,21 @@ function getActionElements(
 }
 
 describe("buildCompletionBlocks", () => {
+  it("converts agent Markdown to Slack mrkdwn", () => {
+    const blocks = buildCompletionBlocks(
+      "session-123",
+      {
+        ...BASE_RESPONSE,
+        textContent: "**My Read**\n\n- **Why it matters:** evidence",
+      },
+      BASE_CONTEXT,
+      "https://app.openinspect.dev"
+    );
+
+    const responseBlock = blocks.find((block) => block.type === "section");
+    expect(responseBlock?.text?.text).toBe("*My Read*\n\n• *Why it matters:* evidence");
+  });
+
   it("escapes the target label in the mrkdwn status footer", () => {
     // Environment-launched sessions carry the raw environment name here.
     const blocks = buildCompletionBlocks(
