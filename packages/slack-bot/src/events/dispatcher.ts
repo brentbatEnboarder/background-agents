@@ -1,5 +1,6 @@
 import { publishAppHome } from "../app-home";
-import { isDmDispatchable } from "../dm-utils";
+import { getBotUserId } from "../bot-identity";
+import { isDmDispatchable, mentionsSlackUser } from "../dm-utils";
 import { admitSlackEvent, resolveIngressBindings } from "../ingress-policy";
 import type { BackgroundTaskScheduler } from "../messages/blocks";
 import type { Env } from "../types";
@@ -72,6 +73,11 @@ export async function handleSlackEvent(
     return;
   }
   if (event.type === "message" && event.user && event.channel && event.ts && event.thread_ts) {
+    const botUserId = await getBotUserId(env, traceId);
+    // Slack emits both `message` and `app_mention` for one channel message that
+    // mentions the bot. The app_mention route owns that request; accepting this
+    // copy too would submit a second prompt with a different Slack event ID.
+    if (!botUserId || mentionsSlackUser(event.text ?? "", botUserId)) return;
     await handleThreadContinuation(
       {
         type: event.type,

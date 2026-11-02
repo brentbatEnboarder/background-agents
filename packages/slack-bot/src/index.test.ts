@@ -3,14 +3,14 @@ import type { Env } from "./types";
 import type { ControlPlaneFetcher } from "@open-inspect/shared/service-auth";
 import type * as SlackModule from "@open-inspect/shared/slack";
 
-const { mockVerifySlackSignature, mockPublishView, mockOpenView, mockGetUserInfo } = vi.hoisted(
-  () => ({
+const { mockVerifySlackSignature, mockPublishView, mockOpenView, mockGetUserInfo, mockAuthTest } =
+  vi.hoisted(() => ({
     mockVerifySlackSignature: vi.fn(),
     mockPublishView: vi.fn(),
     mockOpenView: vi.fn(),
     mockGetUserInfo: vi.fn(),
-  })
-);
+    mockAuthTest: vi.fn(),
+  }));
 
 vi.mock("@open-inspect/shared/slack", async () => {
   const actual = await vi.importActual<typeof SlackModule>("@open-inspect/shared/slack");
@@ -20,6 +20,7 @@ vi.mock("@open-inspect/shared/slack", async () => {
     publishView: mockPublishView,
     openView: mockOpenView,
     getUserInfo: mockGetUserInfo,
+    authTest: mockAuthTest,
   };
 });
 
@@ -429,6 +430,7 @@ describe("POST /events", () => {
     clearLocalCache();
     mockVerifySlackSignature.mockResolvedValue(true);
     mockGetUserInfo.mockResolvedValue({ ok: false, error: "user_not_found" });
+    mockAuthTest.mockResolvedValue({ ok: true, user_id: "B123" });
   });
 
   it("publishes App Home when the home tab is opened", async () => {
@@ -940,6 +942,49 @@ describe("POST /events", () => {
         "json"
       )
     ).resolves.toEqual(expect.objectContaining({ lastPromptTs: "333.444" }));
+
+    slackFetch.mockRestore();
+  });
+
+  it("starts one investigation when Slack emits message and app_mention events for one mention", async () => {
+    const slackFetch = mockSlackFetch([]);
+    const env = makeSessionEnv([]);
+    await (env.SLACK_KV as unknown as { put: (k: string, v: string) => Promise<void> }).put(
+      "thread:C123:111.222",
+      JSON.stringify({
+        sessionId: "session-1",
+        repoId: "acme/app",
+        repoFullName: "acme/app",
+        model: "anthropic/claude-haiku-4-5",
+        createdAt: Date.now(),
+      })
+    );
+    const messageContext = makeCtx();
+    const mentionContext = makeCtx();
+    const sharedMessage = {
+      text: "<@B123> investigate",
+      user: "U123",
+      channel: "C123",
+      ts: "333.444",
+      thread_ts: "111.222",
+    };
+
+    const responses = await Promise.all([
+      app.fetch(
+        slackEventRequest({ type: "message", ...sharedMessage }, "Ev-message"),
+        env,
+        messageContext
+      ),
+      app.fetch(
+        slackEventRequest({ type: "app_mention", ...sharedMessage }, "Ev-mention"),
+        env,
+        mentionContext
+      ),
+    ]);
+    await Promise.all([flushWaitUntil(messageContext), flushWaitUntil(mentionContext)]);
+
+    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    expect(promptFetchBodies(env.CONTROL_PLANE.fetch)).toHaveLength(1);
 
     slackFetch.mockRestore();
   });

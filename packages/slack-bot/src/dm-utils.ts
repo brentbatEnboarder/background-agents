@@ -47,7 +47,7 @@ export function isDmDispatchable(event: {
  * bare `<@U…>` and piped `<@U…|display-name>` renderings. Slack user IDs are
  * `[A-Z0-9]+`, so the id is safe to splice into the pattern verbatim.
  */
-function mentionsUser(text: string, userId: string): boolean {
+export function mentionsSlackUser(text: string, userId: string): boolean {
   return new RegExp(`<@${userId}(?:\\|[^>]*)?>`).test(text);
 }
 
@@ -91,6 +91,6 @@ export function isChannelTriggerCandidate(
   if (event.channel_type !== "channel" && event.channel_type !== "group") return false;
   if (!event.text || !event.channel || !event.ts || !event.user) return false;
   if (event.user === botUserId) return false;
-  if (mentionsUser(event.text, botUserId)) return false;
+  if (mentionsSlackUser(event.text, botUserId)) return false;
   return true;
 }

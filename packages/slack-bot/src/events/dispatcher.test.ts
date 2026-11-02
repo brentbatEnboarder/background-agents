@@ -8,15 +8,18 @@ const {
   mockHandleDirectMessage,
   mockContinuation,
   mockUnauthorizedReply,
+  mockGetBotUserId,
 } = vi.hoisted(() => ({
   mockPublishAppHome: vi.fn(),
   mockHandleAppMention: vi.fn(),
   mockHandleDirectMessage: vi.fn(),
   mockContinuation: vi.fn(),
   mockUnauthorizedReply: vi.fn(),
+  mockGetBotUserId: vi.fn(),
 }));
 
 vi.mock("../app-home", () => ({ publishAppHome: mockPublishAppHome }));
+vi.mock("../bot-identity", () => ({ getBotUserId: mockGetBotUserId }));
 vi.mock("./unauthorized-reply", () => ({ replyToUnauthorizedUser: mockUnauthorizedReply }));
 vi.mock("./message-handler", () => ({
   handleAppMention: mockHandleAppMention,
@@ -44,7 +47,10 @@ function payload(event: SlackEventPayload["event"]): SlackEventPayload {
 }
 
 describe("handleSlackEvent", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetBotUserId.mockResolvedValue("UBOT");
+  });
 
   it("offers the fixed reply only to a user the allowlist rejects", async () => {
     const rejected = payload({
@@ -106,6 +112,45 @@ describe("handleSlackEvent", () => {
     );
     expect(mockHandleAppMention).not.toHaveBeenCalled();
     expect(mockHandleDirectMessage).not.toHaveBeenCalled();
+  });
+
+  it("leaves a bot mention to the app_mention event", async () => {
+    await handleSlackEvent(
+      payload({
+        type: "message",
+        text: "<@UBOT> investigate",
+        user: "U123",
+        channel: "C123",
+        ts: "222.333",
+        thread_ts: "111.222",
+      }),
+      env,
+      "trace-mention-copy",
+      scheduleBackground
+    );
+
+    expect(mockContinuation).not.toHaveBeenCalled();
+    expect(mockHandleAppMention).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when it cannot distinguish an ordinary reply from a mention copy", async () => {
+    mockGetBotUserId.mockResolvedValue(null);
+
+    await handleSlackEvent(
+      payload({
+        type: "message",
+        text: "continue this",
+        user: "U123",
+        channel: "C123",
+        ts: "222.333",
+        thread_ts: "111.222",
+      }),
+      env,
+      "trace-no-bot-identity",
+      scheduleBackground
+    );
+
+    expect(mockContinuation).not.toHaveBeenCalled();
   });
 
   it("silently ignores an authorized ordinary top-level channel message", async () => {
