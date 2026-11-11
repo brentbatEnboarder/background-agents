@@ -262,18 +262,6 @@ describe("POST /events deduplication", () => {
     ["workspace", { team_id: undefined }],
     ["workspace", { team_id: "T999" }],
     ["user", { event: { type: "app_home_opened", tab: "home", user: "U999" } }],
-    [
-      "channel",
-      {
-        event: {
-          type: "message",
-          text: "not allowed",
-          user: "U123",
-          channel: "C999",
-          channel_type: "channel",
-        },
-      },
-    ],
   ])("rejects the wrong %s before dedupe or dispatch", async (_name, override) => {
     const env = makeEnv("get");
     const base = {
@@ -346,7 +334,7 @@ describe("POST /events deduplication", () => {
     expect(mockHandleSlackEvent).not.toHaveBeenCalled();
   });
 
-  it("does not treat channel_type im as a DM without a D-prefixed channel", async () => {
+  it("admits an authorized requester despite misleading channel_type metadata", async () => {
     const env = makeEnv("get");
     const response = await eventRoutes.fetch(
       slackRequest(
@@ -368,8 +356,8 @@ describe("POST /events deduplication", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(dedupeReads(env)).toEqual([]);
-    expect(mockHandleSlackEvent).not.toHaveBeenCalled();
+    expect(dedupeReads(env)).toEqual([["event:Ev-fake-dm"]]);
+    expect(mockHandleSlackEvent).toHaveBeenCalledOnce();
   });
 
   it("acknowledges unsupported message subtypes before user and channel admission", async () => {

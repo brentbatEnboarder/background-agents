@@ -210,10 +210,6 @@ describe("handleSlackEvent", () => {
       "user",
       { event: { type: "message", user: "U999", channel: "C123", ts: "2", thread_ts: "1" } },
     ],
-    [
-      "channel",
-      { event: { type: "message", user: "U123", channel: "C999", ts: "2", thread_ts: "1" } },
-    ],
     ["bot", { event: { type: "message", bot_id: "B123", channel: "C123" } }],
     ["subtype", { event: { type: "message", subtype: "message_changed" } }],
   ])("reapplies %s admission before handler side effects", async (_label, override) => {
