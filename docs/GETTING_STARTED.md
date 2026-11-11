@@ -1133,7 +1133,7 @@ and the approved credential store.
 | `SLACK_APP_ID`                     | Expected Slack app ID (required if enabled)                                                 |
 | `SLACK_TEAM_ID`                    | Expected Slack workspace/team ID (required if enabled)                                      |
 | `SLACK_ALLOWED_USER_IDS`           | Comma-separated Slack user IDs admitted by the Worker (required if enabled)                 |
-| `SLACK_ALLOWED_CHANNEL_IDS`        | Comma-separated channel IDs; authorized direct-message IDs are exempt (required if enabled) |
+| `SLACK_ALLOWED_CHANNEL_IDS`        | Channels where rejected-user mentions receive the fixed denial reply; not an admission control (required if enabled) |
 | `ENABLE_LINEAR_BOT`                | `true` to deploy Linear bot, `false` to skip (default: `false`)                             |
 | `LINEAR_CLIENT_ID`                 | Linear OAuth application client ID (required if Linear enabled)                             |
 | `LINEAR_CLIENT_SECRET`             | Linear OAuth application client secret (required if Linear enabled)                         |

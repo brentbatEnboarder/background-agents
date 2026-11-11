@@ -43,14 +43,13 @@ type SlackIngressPolicy = {
   appId: string;
   teamId: string;
   allowedUserIds: Set<string>;
-  allowedChannelIds: Set<string>;
 };
 
 const ID_PATTERNS = {
   app: /^A[A-Z0-9]+$/,
   team: /^T[A-Z0-9]+$/,
   user: /^[UW][A-Z0-9]+$/,
-  channel: /^[CG][A-Z0-9]+$/,
+  destination: /^[CGD][A-Z0-9]+$/,
 };
 
 function parseIdList(value: string, pattern: RegExp): Set<string> | null {
@@ -64,19 +63,10 @@ function parsePolicy(bindings: SlackIngressBindings): SlackIngressPolicy | null 
   const appId = (bindings.SLACK_APP_ID ?? "").trim();
   const teamId = (bindings.SLACK_TEAM_ID ?? "").trim();
   const allowedUserIds = parseIdList(bindings.SLACK_ALLOWED_USER_IDS ?? "", ID_PATTERNS.user);
-  const allowedChannelIds = parseIdList(
-    bindings.SLACK_ALLOWED_CHANNEL_IDS ?? "",
-    ID_PATTERNS.channel
-  );
-  if (
-    !ID_PATTERNS.app.test(appId) ||
-    !ID_PATTERNS.team.test(teamId) ||
-    !allowedUserIds ||
-    !allowedChannelIds
-  ) {
+  if (!ID_PATTERNS.app.test(appId) || !ID_PATTERNS.team.test(teamId) || !allowedUserIds) {
     return null;
   }
-  return { appId, teamId, allowedUserIds, allowedChannelIds };
+  return { appId, teamId, allowedUserIds };
 }
 
 /**
@@ -125,16 +115,13 @@ function admitIdentity(
   appId: string | undefined,
   teamId: string | undefined,
   userId: string | undefined,
-  channelId: string | undefined,
-  isDirectMessage: boolean
+  channelId: string | undefined
 ): SlackIngressDecision {
   if (!appId || !teamId || !userId) return reject("missing_identity");
   if (appId !== policy.appId) return reject("app_mismatch");
   if (teamId !== policy.teamId) return reject("workspace_mismatch");
   if (!policy.allowedUserIds.has(userId)) return reject("user_not_allowed");
-  if (channelId && !isDirectMessage && !policy.allowedChannelIds.has(channelId)) {
-    return reject("channel_not_allowed");
-  }
+  if (channelId && !ID_PATTERNS.destination.test(channelId)) return reject("channel_not_allowed");
   return { admitted: true };
 }
 
@@ -163,14 +150,7 @@ export function admitSlackEvent(
   if ((event?.type === "app_mention" || event?.type === "message") && !event.channel) {
     return reject("channel_not_allowed");
   }
-  return admitIdentity(
-    policy,
-    payload.api_app_id,
-    payload.team_id,
-    event?.user,
-    event?.channel,
-    event?.channel?.startsWith("D") === true
-  );
+  return admitIdentity(policy, payload.api_app_id, payload.team_id, event?.user, event?.channel);
 }
 
 export function admitSlackInteraction(
@@ -189,12 +169,5 @@ export function admitSlackInteraction(
     (payload.view?.type === "home" || payload.view?.type === "modal") &&
     (!payload.container || payload.container.type === "view");
   if (!channelId && !isViewInteraction) return reject("channel_not_allowed");
-  return admitIdentity(
-    policy,
-    payload.api_app_id,
-    payload.team?.id,
-    payload.user?.id,
-    channelId,
-    channelId?.startsWith("D") === true
-  );
+  return admitIdentity(policy, payload.api_app_id, payload.team?.id, payload.user?.id, channelId);
 }

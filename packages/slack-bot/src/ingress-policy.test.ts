@@ -32,6 +32,15 @@ function dm(user: string): SlackEventPayload {
   };
 }
 
+function mention(user: string, channel: string): SlackEventPayload {
+  return {
+    type: "event_callback",
+    api_app_id: "A123",
+    team_id: "T123",
+    event: { type: "app_mention", user, channel, text: "<@A123> hi", ts: "1.1" },
+  };
+}
+
 async function admitted(env: Parameters<typeof resolveIngressBindings>[0], user: string) {
   return admitSlackEvent(dm(user), await resolveIngressBindings(env)).admitted;
 }
@@ -71,5 +80,16 @@ describe("resolveIngressBindings", () => {
         reason: "invalid_configuration",
       });
     }
+  });
+});
+
+describe("admitSlackEvent", () => {
+  it("admits an allowed requester from any valid channel where the app is present", () => {
+    expect(admitSlackEvent(mention("U123", "C999"), configured)).toEqual({ admitted: true });
+    expect(admitSlackEvent(mention("U999", "C999"), configured)).toEqual({
+      admitted: false,
+      ignored: false,
+      reason: "user_not_allowed",
+    });
   });
 });

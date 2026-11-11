@@ -123,7 +123,8 @@ describe("POST /interactions ingress policy", () => {
     expect(mockAppHome).toHaveBeenCalledOnce();
   });
 
-  it("enforces a channel found only in message container provenance", async () => {
+  it("admits an authorized requester in a channel found only in message container provenance", async () => {
+    const ctx = makeCtx();
     const response = await interactionRoutes.fetch(
       request({
         ...identity,
@@ -132,12 +133,12 @@ describe("POST /interactions ingress policy", () => {
         actions: [{ action_id: "view_session" }],
       }),
       makeEnv(),
-      makeCtx()
+      ctx
     );
 
-    expect(response.status).toBe(403);
-    expect(mockAppHome).not.toHaveBeenCalled();
-    expect(mockHandleInteraction).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    await ctx.waitUntil.mock.calls[0][0];
+    expect(mockHandleInteraction).toHaveBeenCalledOnce();
   });
 
   it("rejects a channel-less interaction without App Home or modal provenance", async () => {
@@ -159,7 +160,6 @@ describe("POST /interactions ingress policy", () => {
     ["workspace", { team: { id: "T999" } }],
     ["user", { user: undefined }],
     ["user", { user: { id: "U999" } }],
-    ["channel", { channel: { id: "C999" } }],
   ])("rejects the wrong %s before downstream activity", async (_name, override) => {
     const response = await interactionRoutes.fetch(
       request({
