@@ -37,6 +37,8 @@ function successEvent(overrides: Record<string, unknown> = {}): ToolCallEvent {
       truncated: false,
       strippedBroadcasts: false,
       mentionsModified: false,
+      attachmentId: null,
+      threadMapping: "not-requested",
       ...overrides,
     }),
   };

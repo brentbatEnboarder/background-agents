@@ -22,6 +22,7 @@ import { keyboardShortcutRoutes } from "./keyboard-shortcuts";
 import { mcpServerRoutes } from "./mcp-servers";
 import { modelPreferencesRoutes } from "./model-preferences";
 import { modelProviderAccountRoutes } from "./model-provider-accounts";
+import { planhatOAuthRoutes } from "./planhat-oauth";
 import { providerRuntimeCredentialRoutes } from "./provider-runtime-credentials";
 import { rbacRoutes } from "./rbac";
 import { reposRoutes } from "./repos";
@@ -63,6 +64,8 @@ export const catalog: readonly RouteModule[] = [
   modelProviderAccountRoutes,
   // Delivery of stored provider secrets to sandboxes (Anthropic)
   providerRuntimeCredentialRoutes,
+  // Environment-scoped Planhat OAuth custody (no MCP tools are exposed here)
+  planhatOAuthRoutes,
 
   // Integration settings
   integrationSettingsRoutes,
