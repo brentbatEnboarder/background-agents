@@ -12,6 +12,7 @@ interface ConnectionRow {
   refresh_token_encrypted: string;
   access_token_expires_at: number;
   expected_grant: typeof PLANHAT_EXPECTED_GRANT;
+  assigned_automation_id: string | null;
   assignment_enabled: number;
   connected_at: number;
   created_at: number;
@@ -34,6 +35,7 @@ export interface PlanhatOAuthConnectionMetadata {
   environmentId: string;
   revision: number;
   expectedGrant: typeof PLANHAT_EXPECTED_GRANT;
+  assignedAutomationId: string | null;
   assignmentEnabled: boolean;
   accessTokenExpiresAt: number;
   connectedAt: number;
@@ -74,6 +76,7 @@ function metadata(row: ConnectionRow): PlanhatOAuthConnectionMetadata {
     environmentId: row.environment_id,
     revision: row.revision,
     expectedGrant: row.expected_grant,
+    assignedAutomationId: row.assigned_automation_id,
     assignmentEnabled: row.assignment_enabled === 1,
     accessTokenExpiresAt: row.access_token_expires_at,
     connectedAt: row.connected_at,
@@ -190,9 +193,10 @@ export class PlanhatOAuthConnectionStore {
         .prepare(
           `INSERT INTO planhat_oauth_connections
            (environment_id, revision, client_id, client_secret_encrypted, access_token_encrypted,
-            refresh_token_encrypted, access_token_expires_at, expected_grant, assignment_enabled,
+            refresh_token_encrypted, access_token_expires_at, expected_grant,
+            assigned_automation_id, assignment_enabled,
             connected_at, created_at, updated_at)
-           SELECT ?, 1, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?
+           SELECT ?, 1, ?, ?, ?, ?, ?, ?, NULL, 0, ?, ?, ?
            WHERE EXISTS (
              SELECT 1 FROM planhat_oauth_authorizations
              WHERE state_hash = ? AND environment_id = ?
@@ -205,6 +209,7 @@ export class PlanhatOAuthConnectionStore {
              refresh_token_encrypted = excluded.refresh_token_encrypted,
              access_token_expires_at = excluded.access_token_expires_at,
              expected_grant = excluded.expected_grant,
+             assigned_automation_id = NULL,
              assignment_enabled = 0,
              connected_at = excluded.connected_at,
              updated_at = excluded.updated_at`
@@ -239,6 +244,18 @@ export class PlanhatOAuthConnectionStore {
     return row ? metadata(row) : null;
   }
 
+  async getMetadataForSession(sessionId: string): Promise<PlanhatOAuthConnectionMetadata | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT connection.* FROM planhat_oauth_connections connection
+         JOIN sessions session ON session.environment_id = connection.environment_id
+         WHERE session.id = ?`
+      )
+      .bind(sessionId)
+      .first<ConnectionRow>();
+    return row ? metadata(row) : null;
+  }
+
   async getTokens(environmentId: string): Promise<PlanhatOAuthTokenRecord | null> {
     const row = await this.getRow(environmentId);
     if (!row) return null;
@@ -260,23 +277,25 @@ export class PlanhatOAuthConnectionStore {
   async setAssignment(
     environmentId: string,
     enabled: boolean,
+    automationId: string | null,
     expectedRevision: number
   ): Promise<PlanhatOAuthConnectionMetadata | null> {
     const now = Date.now();
     const row = await this.db
       .prepare(
         `UPDATE planhat_oauth_connections
-         SET assignment_enabled = ?, revision = revision + 1, updated_at = ?
+         SET assigned_automation_id = ?, assignment_enabled = ?, revision = revision + 1, updated_at = ?
          WHERE environment_id = ? AND revision = ?
          RETURNING *`
       )
-      .bind(enabled ? 1 : 0, now, environmentId, expectedRevision)
+      .bind(enabled ? automationId : null, enabled ? 1 : 0, now, environmentId, expectedRevision)
       .first<ConnectionRow>();
     return row ? metadata(row) : null;
   }
 
   async casUpdateTokens(input: {
     environmentId: string;
+    expectedAutomationId: string;
     expectedRefreshTokenEncrypted: string;
     accessToken: string;
     refreshToken: string;
@@ -292,7 +311,10 @@ export class PlanhatOAuthConnectionStore {
         `UPDATE planhat_oauth_connections
          SET access_token_encrypted = ?, refresh_token_encrypted = ?, access_token_expires_at = ?,
              revision = revision + 1, updated_at = ?
-         WHERE environment_id = ? AND refresh_token_encrypted = ?`
+          WHERE environment_id = ?
+            AND assigned_automation_id = ?
+            AND assignment_enabled = 1
+            AND refresh_token_encrypted = ?`
       )
       .bind(
         accessTokenEncrypted,
@@ -300,6 +322,7 @@ export class PlanhatOAuthConnectionStore {
         input.accessTokenExpiresAt,
         now,
         input.environmentId,
+        input.expectedAutomationId,
         input.expectedRefreshTokenEncrypted
       )
       .run();

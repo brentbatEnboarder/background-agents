@@ -21,6 +21,7 @@ exports[`route admission matrix > admits a session-bound sandbox token on every 
   "POST /sessions/:id/slack-notify sandbox=400 wrong-token=401",
   "POST /sessions/:id/provider-auth/:provider/access-token sandbox=404 wrong-token=401",
   "POST /sessions/:id/provider-auth/:provider/runtime-credential sandbox=409 wrong-token=401",
+  "POST /sessions/:id/planhat-mcp/conversation-messages sandbox=400 wrong-token=401",
   "GET /sessions/:id/commit-signing sandbox=200 wrong-token=401",
   "POST /sessions/:id/commit-signing sandbox=400 wrong-token=401",
 ]
@@ -312,6 +313,7 @@ exports[`route admission matrix > rejects every credentialed route anonymously b
   "POST /environments/:id/integrations/planhat/oauth/connect anonymous=401",
   "PUT /environments/:id/integrations/planhat/oauth/assignment anonymous=401",
   "DELETE /environments/:id/integrations/planhat/oauth anonymous=401",
+  "POST /sessions/:id/planhat-mcp/conversation-messages anonymous=401",
   "GET /integration-settings/:id anonymous=401",
   "PUT /integration-settings/:id anonymous=401",
   "DELETE /integration-settings/:id anonymous=401",

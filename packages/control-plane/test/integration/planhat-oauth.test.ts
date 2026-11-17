@@ -5,10 +5,37 @@ import {
   PlanhatOAuthAuthorizationConflictError,
   PlanhatOAuthConnectionStore,
 } from "../../src/db/planhat-oauth-connections";
+import { AutomationStore, type AutomationRow } from "../../src/db/automation-store";
 import { cleanD1Tables } from "./cleanup";
 import { serviceFetch, sqlDatabase } from "./helpers";
 
 const ENVIRONMENT_ID = "env_planhat_alex";
+const AUTOMATION_ID = "automation_planhat_alex";
+
+function automation(): AutomationRow {
+  return {
+    id: AUTOMATION_ID,
+    name: "Alex – Customer Success",
+    instructions: "Invented integration test automation",
+    trigger_type: "webhook",
+    schedule_cron: null,
+    schedule_tz: "UTC",
+    harness: "opencode",
+    event_type: null,
+    trigger_config: null,
+    trigger_auth_data: null,
+    model: "anthropic/claude-haiku-4-5",
+    reasoning_effort: null,
+    enabled: 1,
+    next_run_at: null,
+    consecutive_failures: 0,
+    created_by: "integration-test",
+    user_id: null,
+    created_at: 1,
+    updated_at: 1,
+    deleted_at: null,
+  };
+}
 
 async function seedEnvironment(): Promise<void> {
   const now = Date.now();
@@ -18,6 +45,13 @@ async function seedEnvironment(): Promise<void> {
      VALUES (?, ?, NULL, 0, NULL, ?, ?)`
   )
     .bind(ENVIRONMENT_ID, "Alex – Customer Success", now, now)
+    .run();
+  await new AutomationStore(env.DB).create(automation());
+  await env.DB.prepare(
+    `INSERT INTO automation_environments
+     (automation_id, environment_id, created_at, updated_at) VALUES (?, ?, ?, ?)`
+  )
+    .bind(AUTOMATION_ID, ENVIRONMENT_ID, now, now)
     .run();
 }
 
@@ -126,11 +160,15 @@ describe("Planhat OAuth connection API", () => {
 
     const assignment = await serviceFetch(
       `https://test.local/environments/${ENVIRONMENT_ID}/integrations/planhat/oauth/assignment`,
-      { method: "PUT", body: JSON.stringify({ enabled: true, revision: 1 }) }
+      {
+        method: "PUT",
+        body: JSON.stringify({ enabled: true, automationId: AUTOMATION_ID, revision: 1 }),
+      }
     );
     expect(assignment.status).toBe(200);
     await expect(assignment.json()).resolves.toMatchObject({
       assignmentEnabled: true,
+      assignedAutomationId: AUTOMATION_ID,
       revision: 2,
     });
 

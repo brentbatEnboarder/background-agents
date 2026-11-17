@@ -22,6 +22,7 @@ export interface PlanhatOAuthTokenStore {
   getTokens(environmentId: string): Promise<PlanhatOAuthTokenRecord | null>;
   casUpdateTokens(input: {
     environmentId: string;
+    expectedAutomationId: string;
     expectedRefreshTokenEncrypted: string;
     accessToken: string;
     refreshToken: string;
@@ -40,17 +41,22 @@ export class PlanhatOAuthTokenBroker {
     private readonly now: () => number = Date.now
   ) {}
 
-  async getAccessToken(environmentId: string): Promise<string> {
+  async getAccessToken(environmentId: string, expectedAutomationId: string): Promise<string> {
     const record = await this.readRecord(environmentId);
-    if (!record.assignmentEnabled) throw new PlanhatOAuthAssignmentDisabledError();
+    if (!record.assignmentEnabled || record.assignedAutomationId !== expectedAutomationId) {
+      throw new PlanhatOAuthAssignmentDisabledError();
+    }
     if (this.isFresh(record)) return record.accessToken;
 
     return refreshCoordinator.run({ kind: "environment", environmentId }, record.refreshToken, () =>
-      this.refreshAndPersist(record)
+      this.refreshAndPersist(record, expectedAutomationId)
     );
   }
 
-  private async refreshAndPersist(record: PlanhatOAuthTokenRecord): Promise<string> {
+  private async refreshAndPersist(
+    record: PlanhatOAuthTokenRecord,
+    expectedAutomationId: string
+  ): Promise<string> {
     let tokens: PlanhatTokenResponse;
     try {
       tokens = await this.refresh({
@@ -59,7 +65,7 @@ export class PlanhatOAuthTokenBroker {
         clientSecret: record.clientSecret,
       });
     } catch (error) {
-      const concurrent = await this.readConcurrentRotation(record);
+      const concurrent = await this.readConcurrentRotation(record, expectedAutomationId);
       if (concurrent) return concurrent;
       this.log.warn("Planhat OAuth token refresh failed", {
         event: "planhat_oauth.refresh_failed",
@@ -74,6 +80,7 @@ export class PlanhatOAuthTokenBroker {
     try {
       result = await this.store.casUpdateTokens({
         environmentId: record.environmentId,
+        expectedAutomationId,
         expectedRefreshTokenEncrypted: record.refreshTokenEncrypted,
         accessToken: tokens.access_token,
         refreshToken: tokens.refresh_token,
@@ -92,7 +99,7 @@ export class PlanhatOAuthTokenBroker {
     }
 
     if (!result.ok) {
-      const concurrent = await this.readConcurrentRotation(record);
+      const concurrent = await this.readConcurrentRotation(record, expectedAutomationId);
       if (concurrent) return concurrent;
       throw new PlanhatOAuthConcurrencyError("Planhat OAuth rotation could not be reconciled");
     }
@@ -117,7 +124,10 @@ export class PlanhatOAuthTokenBroker {
     return record;
   }
 
-  private async readConcurrentRotation(previous: PlanhatOAuthTokenRecord): Promise<string | null> {
+  private async readConcurrentRotation(
+    previous: PlanhatOAuthTokenRecord,
+    expectedAutomationId: string
+  ): Promise<string | null> {
     let current: PlanhatOAuthTokenRecord | null;
     try {
       current = await this.store.getTokens(previous.environmentId);
@@ -129,6 +139,7 @@ export class PlanhatOAuthTokenBroker {
     if (
       current &&
       current.assignmentEnabled &&
+      current.assignedAutomationId === expectedAutomationId &&
       current.refreshTokenEncrypted !== previous.refreshTokenEncrypted &&
       this.isFresh(current)
     ) {

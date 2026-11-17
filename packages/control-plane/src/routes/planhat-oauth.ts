@@ -11,6 +11,7 @@ import {
   PLANHAT_EXPECTED_GRANT,
   PlanhatOAuthConnectionStore,
 } from "../db/planhat-oauth-connections";
+import { AutomationStore } from "../db/automation-store";
 import { EnvironmentStore } from "../db/environments";
 import { requireTokenEncryptionKey } from "../env-validation";
 import { createLogger } from "../logger";
@@ -40,12 +41,21 @@ const connectSchema = z
   })
   .strict();
 
-const assignmentSchema = z
-  .object({
-    enabled: z.boolean(),
-    revision: z.number().int().positive(),
-  })
-  .strict();
+const assignmentSchema = z.discriminatedUnion("enabled", [
+  z
+    .object({
+      enabled: z.literal(true),
+      automationId: z.string().trim().min(1).max(200),
+      revision: z.number().int().positive(),
+    })
+    .strict(),
+  z
+    .object({
+      enabled: z.literal(false),
+      revision: z.number().int().positive(),
+    })
+    .strict(),
+]);
 
 function callbackUrl(env: Env): string {
   if (!env.WORKER_URL) throw new Error("WORKER_URL is required for Planhat OAuth");
@@ -219,11 +229,28 @@ async function handleAssignment(
   if (missing) return missing;
   const parsed = await parseBody(request, assignmentSchema, "Invalid Planhat assignment");
   if (parsed instanceof Response) return parsed;
-  const updated = await store(env, ctx).setAssignment(params.id, parsed.enabled, parsed.revision);
+  const automationId = parsed.enabled ? parsed.automationId : null;
+  if (automationId) {
+    const automations = new AutomationStore(ctx.db);
+    const [automation, environments] = await Promise.all([
+      automations.getById(automationId),
+      automations.getEnvironmentsForAutomation(automationId),
+    ]);
+    if (!automation || !environments.some((row) => row.environment_id === params.id)) {
+      return error("Automation is not assigned to this environment", 400);
+    }
+  }
+  const updated = await store(env, ctx).setAssignment(
+    params.id,
+    parsed.enabled,
+    automationId,
+    parsed.revision
+  );
   if (!updated) return error("Planhat OAuth connection changed; reload and try again", 409);
   logger.info("Planhat gateway assignment changed", {
     event: "planhat_oauth.assignment_changed",
     environment_id: params.id,
+    automation_id: automationId,
     enabled: parsed.enabled,
     request_id: ctx.request_id,
     trace_id: ctx.trace_id,
