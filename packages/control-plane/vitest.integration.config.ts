@@ -157,6 +157,78 @@ export default defineConfig({
               }
               throw new Error("Unexpected xAI integration-test credential");
             }
+            if (url.href === "https://api.planhat.com/oauth/token") {
+              const body = await request.text();
+              if (
+                request.headers.get("authorization") !==
+                  `Basic ${btoa("integration-planhat-client:integration-planhat-secret")}` ||
+                !body.includes("grant_type=authorization_code") ||
+                !body.includes("code=integration-planhat-code") ||
+                !body.includes("code_verifier=")
+              ) {
+                return Response.json({ error: "invalid_grant" }, { status: 401 });
+              }
+              return Response.json({
+                access_token: "integration-planhat-access",
+                refresh_token: "integration-planhat-refresh",
+                expires_in: 3600,
+              });
+            }
+            if (url.hostname === "api.planhat.com" && url.pathname === "/v1/mcp") {
+              if (request.headers.get("authorization") !== "Bearer integration-planhat-access") {
+                return Response.json({ error: "unauthorized" }, { status: 401 });
+              }
+              if (request.method === "DELETE") return new Response(null, { status: 204 });
+              if (!request.headers.has("mcp-session-id")) {
+                return Response.json(
+                  { jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18" } },
+                  { headers: { "mcp-session-id": "integration-planhat-mcp-session" } }
+                );
+              }
+              const body = JSON.parse(await request.text()) as {
+                id?: number;
+                method?: string;
+                params?: { arguments?: { OBJECT_ID?: string } };
+              };
+              if (body.method === "notifications/initialized") {
+                return new Response(null, { status: 202 });
+              }
+              const conversationId = body.params?.arguments?.OBJECT_ID;
+              if (conversationId === "must-not-read") {
+                throw new Error("Denied request reached Planhat");
+              }
+              if (conversationId === "conversation-provider-error") {
+                return new Response("provider detail must stay private", { status: 503 });
+              }
+              if (conversationId === "conversation-malformed") {
+                return new Response("not-json", {
+                  headers: { "content-type": "application/json" },
+                });
+              }
+              if (conversationId === "conversation-oversized") {
+                return new Response("small", {
+                  headers: { "content-length": String(5 * 1024 * 1024 + 1) },
+                });
+              }
+              if (conversationId === "conversation-timeout") {
+                throw new DOMException("private timeout detail", "TimeoutError");
+              }
+              const returnedConversationId =
+                conversationId === "conversation-mismatch" ? "conversation-other" : conversationId;
+              return Response.json({
+                jsonrpc: "2.0",
+                id: body.id,
+                result: {
+                  structuredContent: {
+                    _id: returnedConversationId,
+                    companyId: "company-invented",
+                    numberOfParts: 1,
+                    parts: [{ _id: "part-invented", content: "transient invented body" }],
+                    unrestricted: "must be projected out",
+                  },
+                },
+              });
+            }
             throw new Error(`Unexpected outbound request: ${request.url}`);
           },
           queueProducers: ["IMAGE_BUILD_FINALIZATION_QUEUE"],
@@ -183,6 +255,7 @@ export default defineConfig({
             MODAL_WORKSPACE: "test-workspace",
             SLACK_BOT_TOKEN: "xoxb-test-integration",
             WEB_APP_URL: "https://app.test.local",
+            WORKER_URL: "https://control.test.local",
             APP_NAME: "Open-Inspect",
             TEST_MIGRATIONS: migrations,
           },
