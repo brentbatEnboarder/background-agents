@@ -162,12 +162,18 @@ describe("Planhat OAuth connection API", () => {
       `https://test.local/environments/${ENVIRONMENT_ID}/integrations/planhat/oauth/assignment`,
       {
         method: "PUT",
-        body: JSON.stringify({ enabled: true, automationId: AUTOMATION_ID, revision: 1 }),
+        body: JSON.stringify({
+          enabled: true,
+          assignmentMode: "automation",
+          automationId: AUTOMATION_ID,
+          revision: 1,
+        }),
       }
     );
     expect(assignment.status).toBe(200);
     await expect(assignment.json()).resolves.toMatchObject({
       assignmentEnabled: true,
+      assignmentMode: "automation",
       assignedAutomationId: AUTOMATION_ID,
       revision: 2,
     });
@@ -177,6 +183,57 @@ describe("Planhat OAuth connection API", () => {
       { method: "PUT", body: JSON.stringify({ enabled: false, revision: 1 }) }
     );
     expect(stale.status).toBe(409);
+  });
+
+  it("supports explicit Slack-environment assignment without an automation", async () => {
+    const { state } = await startConnection();
+    await SELF.fetch(
+      `https://test.local/integrations/planhat/oauth/callback?state=${state}&code=integration-planhat-code`
+    );
+
+    const assignment = await serviceFetch(
+      `https://test.local/environments/${ENVIRONMENT_ID}/integrations/planhat/oauth/assignment`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          enabled: true,
+          assignmentMode: "slack-environment",
+          revision: 1,
+        }),
+      }
+    );
+
+    expect(assignment.status).toBe(200);
+    await expect(assignment.json()).resolves.toMatchObject({
+      assignmentEnabled: true,
+      assignmentMode: "slack-environment",
+      assignedAutomationId: null,
+      revision: 2,
+    });
+  });
+
+  it("rejects implicit, mixed, and unknown assignment modes", async () => {
+    const { state } = await startConnection();
+    await SELF.fetch(
+      `https://test.local/integrations/planhat/oauth/callback?state=${state}&code=integration-planhat-code`
+    );
+    const bodies = [
+      { enabled: true, automationId: AUTOMATION_ID, revision: 1 },
+      {
+        enabled: true,
+        assignmentMode: "slack-environment",
+        automationId: AUTOMATION_ID,
+        revision: 1,
+      },
+      { enabled: true, assignmentMode: "environment", revision: 1 },
+    ];
+    for (const body of bodies) {
+      const response = await serviceFetch(
+        `https://test.local/environments/${ENVIRONMENT_ID}/integrations/planhat/oauth/assignment`,
+        { method: "PUT", body: JSON.stringify(body) }
+      );
+      expect(response.status).toBe(400);
+    }
   });
 
   it("rejects wrong and expired callback state before provider access", async () => {

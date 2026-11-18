@@ -7,6 +7,7 @@ import {
   PlanhatOAuthNotConfiguredError,
   PlanhatOAuthStorageError,
   PlanhatOAuthTokenBroker,
+  type PlanhatExpectedAssignment,
   PlanhatOAuthUpstreamError,
 } from "../auth/planhat-token-broker";
 import { generateId } from "../auth/crypto";
@@ -106,35 +107,52 @@ async function handleExactConversation(
   }
 
   if (!session) return failure(correlationId, "authorization", 404, "Session not found");
-  if (!session.environmentId || !session.automationId || !connection) {
+  if (!session.environmentId || !connection) {
     return failure(correlationId, "assignment", 403, "Planhat gateway is not assigned");
   }
-  if (
-    connection.environmentId !== session.environmentId ||
-    !connection.assignmentEnabled ||
-    connection.assignedAutomationId !== session.automationId
-  ) {
+  if (connection.environmentId !== session.environmentId || !connection.assignmentEnabled) {
     return failure(correlationId, "assignment", 403, "Planhat gateway is not assigned");
   }
 
-  try {
-    const automations = new AutomationStore(ctx.db);
-    const [automation, environments] = await Promise.all([
-      automations.getById(session.automationId),
-      automations.getEnvironmentsForAutomation(session.automationId),
-    ]);
-    if (!automation || !environments.some((row) => row.environment_id === session.environmentId)) {
+  let expectedAssignment: PlanhatExpectedAssignment;
+  if (connection.assignmentMode === "automation") {
+    if (!session.automationId || connection.assignedAutomationId !== session.automationId) {
       return failure(correlationId, "assignment", 403, "Planhat gateway is not assigned");
     }
-  } catch {
-    return failure(correlationId, "authorization", 503);
+    try {
+      const automations = new AutomationStore(ctx.db);
+      const [automation, environments] = await Promise.all([
+        automations.getById(session.automationId),
+        automations.getEnvironmentsForAutomation(session.automationId),
+      ]);
+      if (
+        !automation ||
+        !environments.some((row) => row.environment_id === session.environmentId)
+      ) {
+        return failure(correlationId, "assignment", 403, "Planhat gateway is not assigned");
+      }
+    } catch {
+      return failure(correlationId, "authorization", 503);
+    }
+    expectedAssignment = { mode: "automation", automationId: session.automationId };
+  } else {
+    const isTopLevelActorBoundSlackSession =
+      session.spawnSource === "slack-bot" &&
+      Boolean(session.userId) &&
+      !session.automationId &&
+      !session.parentSessionId &&
+      session.spawnDepth === 0;
+    if (connection.assignedAutomationId || !isTopLevelActorBoundSlackSession) {
+      return failure(correlationId, "assignment", 403, "Planhat gateway is not assigned");
+    }
+    expectedAssignment = { mode: "slack-environment", automationId: null };
   }
 
   let accessToken: string;
   try {
     accessToken = await new PlanhatOAuthTokenBroker(connectionStore, logger).getAccessToken(
       session.environmentId,
-      session.automationId
+      expectedAssignment
     );
   } catch (cause) {
     const unavailable =
@@ -148,6 +166,7 @@ async function handleExactConversation(
       session_id: params.id,
       environment_id: session.environmentId,
       automation_id: session.automationId,
+      assignment_mode: connection.assignmentMode,
       outcome: denied ? "denied" : unavailable ? "storage" : "upstream",
       duration_ms: Date.now() - startedAt,
     });
@@ -166,6 +185,7 @@ async function handleExactConversation(
       session_id: params.id,
       environment_id: session.environmentId,
       automation_id: session.automationId,
+      assignment_mode: connection.assignmentMode,
       operation: PLANHAT_MCP_OPERATION,
       outcome: "success",
       response_bytes: result.responseBytes,
@@ -191,6 +211,7 @@ async function handleExactConversation(
       session_id: params.id,
       environment_id: session.environmentId,
       automation_id: session.automationId,
+      assignment_mode: connection.assignmentMode,
       operation: PLANHAT_MCP_OPERATION,
       stage: transport.stage,
       outcome: transport.outcome,

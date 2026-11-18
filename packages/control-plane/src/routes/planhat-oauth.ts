@@ -9,6 +9,7 @@ import {
 } from "../auth/planhat";
 import {
   PLANHAT_EXPECTED_GRANT,
+  PLANHAT_ASSIGNMENT_MODES,
   PlanhatOAuthConnectionStore,
 } from "../db/planhat-oauth-connections";
 import { AutomationStore } from "../db/automation-store";
@@ -41,11 +42,19 @@ const connectSchema = z
   })
   .strict();
 
-const assignmentSchema = z.discriminatedUnion("enabled", [
+const assignmentSchema = z.union([
   z
     .object({
       enabled: z.literal(true),
+      assignmentMode: z.literal(PLANHAT_ASSIGNMENT_MODES[0]),
       automationId: z.string().trim().min(1).max(200),
+      revision: z.number().int().positive(),
+    })
+    .strict(),
+  z
+    .object({
+      enabled: z.literal(true),
+      assignmentMode: z.literal(PLANHAT_ASSIGNMENT_MODES[1]),
       revision: z.number().int().positive(),
     })
     .strict(),
@@ -229,7 +238,9 @@ async function handleAssignment(
   if (missing) return missing;
   const parsed = await parseBody(request, assignmentSchema, "Invalid Planhat assignment");
   if (parsed instanceof Response) return parsed;
-  const automationId = parsed.enabled ? parsed.automationId : null;
+  const assignmentMode = parsed.enabled ? parsed.assignmentMode : "automation";
+  const automationId =
+    parsed.enabled && parsed.assignmentMode === "automation" ? parsed.automationId : null;
   if (automationId) {
     const automations = new AutomationStore(ctx.db);
     const [automation, environments] = await Promise.all([
@@ -243,6 +254,7 @@ async function handleAssignment(
   const updated = await store(env, ctx).setAssignment(
     params.id,
     parsed.enabled,
+    assignmentMode,
     automationId,
     parsed.revision
   );
@@ -250,6 +262,7 @@ async function handleAssignment(
   logger.info("Planhat gateway assignment changed", {
     event: "planhat_oauth.assignment_changed",
     environment_id: params.id,
+    assignment_mode: assignmentMode,
     automation_id: automationId,
     enabled: parsed.enabled,
     request_id: ctx.request_id,

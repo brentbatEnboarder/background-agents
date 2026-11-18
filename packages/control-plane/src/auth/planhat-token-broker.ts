@@ -2,6 +2,7 @@ import type { Logger } from "../logger";
 import type {
   PlanhatOAuthConnectionStore,
   PlanhatOAuthTokenRecord,
+  PlanhatAssignmentMode,
 } from "../db/planhat-oauth-connections";
 import { OAuthRefreshSingleFlight } from "./oauth-refresh-single-flight";
 import {
@@ -22,12 +23,18 @@ export interface PlanhatOAuthTokenStore {
   getTokens(environmentId: string): Promise<PlanhatOAuthTokenRecord | null>;
   casUpdateTokens(input: {
     environmentId: string;
-    expectedAutomationId: string;
+    expectedAssignmentMode: PlanhatAssignmentMode;
+    expectedAutomationId: string | null;
     expectedRefreshTokenEncrypted: string;
     accessToken: string;
     refreshToken: string;
     accessTokenExpiresAt: number;
   }): Promise<{ ok: true } | { ok: false; reason: "cas-conflict" }>;
+}
+
+export interface PlanhatExpectedAssignment {
+  mode: PlanhatAssignmentMode;
+  automationId: string | null;
 }
 
 type RefreshPlanhatToken = typeof refreshPlanhatAccessToken;
@@ -41,21 +48,24 @@ export class PlanhatOAuthTokenBroker {
     private readonly now: () => number = Date.now
   ) {}
 
-  async getAccessToken(environmentId: string, expectedAutomationId: string): Promise<string> {
+  async getAccessToken(
+    environmentId: string,
+    expectedAssignment: PlanhatExpectedAssignment
+  ): Promise<string> {
     const record = await this.readRecord(environmentId);
-    if (!record.assignmentEnabled || record.assignedAutomationId !== expectedAutomationId) {
+    if (!this.matchesAssignment(record, expectedAssignment)) {
       throw new PlanhatOAuthAssignmentDisabledError();
     }
     if (this.isFresh(record)) return record.accessToken;
 
     return refreshCoordinator.run({ kind: "environment", environmentId }, record.refreshToken, () =>
-      this.refreshAndPersist(record, expectedAutomationId)
+      this.refreshAndPersist(record, expectedAssignment)
     );
   }
 
   private async refreshAndPersist(
     record: PlanhatOAuthTokenRecord,
-    expectedAutomationId: string
+    expectedAssignment: PlanhatExpectedAssignment
   ): Promise<string> {
     let tokens: PlanhatTokenResponse;
     try {
@@ -65,7 +75,7 @@ export class PlanhatOAuthTokenBroker {
         clientSecret: record.clientSecret,
       });
     } catch (error) {
-      const concurrent = await this.readConcurrentRotation(record, expectedAutomationId);
+      const concurrent = await this.readConcurrentRotation(record, expectedAssignment);
       if (concurrent) return concurrent;
       this.log.warn("Planhat OAuth token refresh failed", {
         event: "planhat_oauth.refresh_failed",
@@ -80,7 +90,8 @@ export class PlanhatOAuthTokenBroker {
     try {
       result = await this.store.casUpdateTokens({
         environmentId: record.environmentId,
-        expectedAutomationId,
+        expectedAssignmentMode: expectedAssignment.mode,
+        expectedAutomationId: expectedAssignment.automationId,
         expectedRefreshTokenEncrypted: record.refreshTokenEncrypted,
         accessToken: tokens.access_token,
         refreshToken: tokens.refresh_token,
@@ -99,7 +110,7 @@ export class PlanhatOAuthTokenBroker {
     }
 
     if (!result.ok) {
-      const concurrent = await this.readConcurrentRotation(record, expectedAutomationId);
+      const concurrent = await this.readConcurrentRotation(record, expectedAssignment);
       if (concurrent) return concurrent;
       throw new PlanhatOAuthConcurrencyError("Planhat OAuth rotation could not be reconciled");
     }
@@ -126,7 +137,7 @@ export class PlanhatOAuthTokenBroker {
 
   private async readConcurrentRotation(
     previous: PlanhatOAuthTokenRecord,
-    expectedAutomationId: string
+    expectedAssignment: PlanhatExpectedAssignment
   ): Promise<string | null> {
     let current: PlanhatOAuthTokenRecord | null;
     try {
@@ -138,8 +149,7 @@ export class PlanhatOAuthTokenBroker {
     }
     if (
       current &&
-      current.assignmentEnabled &&
-      current.assignedAutomationId === expectedAutomationId &&
+      this.matchesAssignment(current, expectedAssignment) &&
       current.refreshTokenEncrypted !== previous.refreshTokenEncrypted &&
       this.isFresh(current)
     ) {
@@ -150,5 +160,16 @@ export class PlanhatOAuthTokenBroker {
 
   private isFresh(record: PlanhatOAuthTokenRecord): boolean {
     return record.accessTokenExpiresAt - this.now() > REFRESH_BUFFER_MS;
+  }
+
+  private matchesAssignment(
+    record: PlanhatOAuthTokenRecord,
+    expected: PlanhatExpectedAssignment
+  ): boolean {
+    return (
+      record.assignmentEnabled &&
+      record.assignmentMode === expected.mode &&
+      record.assignedAutomationId === expected.automationId
+    );
   }
 }
