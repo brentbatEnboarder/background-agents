@@ -5,10 +5,11 @@ import { PlanhatOAuthConnectionStore } from "../../src/db/planhat-oauth-connecti
 import { SessionIndexStore } from "../../src/db/session-index";
 import { PLANHAT_MCP_OPERATION } from "../../src/planhat/exact-conversation-transport";
 import { cleanD1Tables } from "./cleanup";
-import { initNamedSessionDO, seedSandboxAuth, sqlDatabase } from "./helpers";
+import { initNamedSessionDO, seedActiveUser, seedSandboxAuth, sqlDatabase } from "./helpers";
 
 const ENVIRONMENT_ID = "env-planhat-gateway";
 const AUTOMATION_ID = "automation-alex-cs";
+const USER_ID = "user-alex-cs";
 let sessionSequence = 0;
 let activeSessionId = "";
 let activeSandboxId = "";
@@ -68,6 +69,10 @@ async function seedSession(
     environmentId?: string;
     sandboxId?: string;
     sandboxToken?: string;
+    spawnSource?: "automation" | "slack-bot" | "user" | "agent";
+    userId?: string | null;
+    parentSessionId?: string | null;
+    spawnDepth?: number;
   } = {}
 ): Promise<void> {
   const sessionId = input.sessionId ?? activeSessionId;
@@ -81,10 +86,16 @@ async function seedSession(
     reasoningEffort: null,
     baseBranch: null,
     status: "created",
-    parentSessionId: null,
-    spawnSource: "automation",
-    spawnDepth: 0,
-    automationId: input.automationId ?? AUTOMATION_ID,
+    parentSessionId: input.parentSessionId ?? null,
+    spawnSource: input.spawnSource ?? "automation",
+    spawnDepth: input.spawnDepth ?? 0,
+    automationId:
+      input.automationId === undefined
+        ? (input.spawnSource ?? "automation") === "automation"
+          ? AUTOMATION_ID
+          : null
+        : input.automationId,
+    userId: input.userId ?? null,
     environmentId: input.environmentId ?? ENVIRONMENT_ID,
     createdAt: now,
     updatedAt: now,
@@ -96,7 +107,10 @@ async function seedSession(
   });
 }
 
-async function seedConnection(assign = true): Promise<void> {
+async function seedConnection(
+  assign = true,
+  assignmentMode: "automation" | "slack-environment" = "automation"
+): Promise<void> {
   const store = new PlanhatOAuthConnectionStore(sqlDatabase(env.DB), env.TOKEN_ENCRYPTION_KEY);
   const stateHash = "d".repeat(64);
   await store.beginAuthorization({
@@ -117,9 +131,23 @@ async function seedConnection(assign = true): Promise<void> {
     accessTokenExpiresAt: Date.now() + 3_600_000,
   });
   if (assign) {
-    const assigned = await store.setAssignment(ENVIRONMENT_ID, true, AUTOMATION_ID, 1);
+    const assigned = await store.setAssignment(
+      ENVIRONMENT_ID,
+      true,
+      assignmentMode,
+      assignmentMode === "automation" ? AUTOMATION_ID : null,
+      1
+    );
     if (!assigned) throw new Error("Planhat assignment not seeded");
   }
+}
+
+async function enableSlackEnvironmentAssignment(): Promise<void> {
+  const store = new PlanhatOAuthConnectionStore(sqlDatabase(env.DB), env.TOKEN_ENCRYPTION_KEY);
+  const disabled = await store.setAssignment(ENVIRONMENT_ID, false, "automation", null, 2);
+  if (!disabled) throw new Error("Planhat automation assignment not disabled");
+  const assigned = await store.setAssignment(ENVIRONMENT_ID, true, "slack-environment", null, 3);
+  if (!assigned) throw new Error("Planhat Slack-environment assignment not enabled");
 }
 
 function gatewayFetch(
@@ -158,6 +186,7 @@ describe("Planhat exact Conversation gateway", () => {
     activeSandboxId = `sandbox-alex-cs-${sessionSequence}`;
     activeSandboxToken = `sandbox-token-alex-cs-${sessionSequence}`;
     await cleanD1Tables();
+    await seedActiveUser(USER_ID);
     await seedEnvironment();
     await seedAutomation();
     await seedSession();
@@ -183,6 +212,85 @@ describe("Planhat exact Conversation gateway", () => {
     expect(body).toHaveProperty("correlationId");
     expect((body.record as Record<string, unknown>).unrestricted).toBeUndefined();
     expect(JSON.stringify(body)).not.toMatch(/integration-planhat-(access|refresh|secret)/);
+  });
+
+  it("admits actor-bound Alex Slack sessions for initial and follow-up exact reads", async () => {
+    await enableSlackEnvironmentAssignment();
+    await seedSession({
+      sessionId: "session-slack-authorized",
+      spawnSource: "slack-bot",
+      userId: USER_ID,
+      sandboxId: "sandbox-slack-authorized",
+      sandboxToken: "token-slack-authorized",
+    });
+
+    for (const conversationId of ["conversation-slack-initial", "conversation-slack-follow-up"]) {
+      const response = await gatewayFetch(conversationId, {
+        sessionId: "session-slack-authorized",
+        sandboxId: "sandbox-slack-authorized",
+        sandboxToken: "token-slack-authorized",
+      });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({ conversationId });
+    }
+  });
+
+  it("denies non-Slack, actorless, child, automation, and wrong-environment sessions", async () => {
+    await enableSlackEnvironmentAssignment();
+    const denied = [
+      { id: "session-web", spawnSource: "user" as const, userId: USER_ID },
+      { id: "session-slack-actorless", spawnSource: "slack-bot" as const, userId: null },
+      { id: "session-automation", spawnSource: "automation" as const, userId: null },
+      {
+        id: "session-child",
+        spawnSource: "agent" as const,
+        userId: USER_ID,
+        parentSessionId: activeSessionId,
+        spawnDepth: 1,
+      },
+    ];
+    for (const candidate of denied) {
+      const sandboxId = `sandbox-${candidate.id}`;
+      const sandboxToken = `token-${candidate.id}`;
+      await seedSession({
+        sessionId: candidate.id,
+        spawnSource: candidate.spawnSource,
+        userId: candidate.userId,
+        parentSessionId: candidate.parentSessionId,
+        spawnDepth: candidate.spawnDepth,
+        sandboxId,
+        sandboxToken,
+      });
+      expect(
+        (
+          await gatewayFetch("must-not-read", {
+            sessionId: candidate.id,
+            sandboxId,
+            sandboxToken,
+          })
+        ).status
+      ).toBe(403);
+    }
+
+    const otherEnvironment = "env-slack-other";
+    await seedEnvironment(otherEnvironment);
+    await seedSession({
+      sessionId: "session-slack-wrong-environment",
+      spawnSource: "slack-bot",
+      userId: USER_ID,
+      environmentId: otherEnvironment,
+      sandboxId: "sandbox-slack-wrong-environment",
+      sandboxToken: "token-slack-wrong-environment",
+    });
+    expect(
+      (
+        await gatewayFetch("must-not-read", {
+          sessionId: "session-slack-wrong-environment",
+          sandboxId: "sandbox-slack-wrong-environment",
+          sandboxToken: "token-slack-wrong-environment",
+        })
+      ).status
+    ).toBe(403);
   });
 
   it("rejects generic MCP, discovery, search, mutation, and caller-selected fields", async () => {
@@ -225,10 +333,10 @@ describe("Planhat exact Conversation gateway", () => {
 
   it("denies disabled, wrong-automation, and wrong-environment sessions before provider access", async () => {
     const store = new PlanhatOAuthConnectionStore(sqlDatabase(env.DB), env.TOKEN_ENCRYPTION_KEY);
-    await store.setAssignment(ENVIRONMENT_ID, false, null, 2);
+    await store.setAssignment(ENVIRONMENT_ID, false, "automation", null, 2);
     expect((await gatewayFetch("must-not-read")).status).toBe(403);
 
-    await store.setAssignment(ENVIRONMENT_ID, true, AUTOMATION_ID, 3);
+    await store.setAssignment(ENVIRONMENT_ID, true, "automation", AUTOMATION_ID, 3);
     const otherAutomation = "automation-other";
     await seedAutomation(otherAutomation);
     await seedSession({

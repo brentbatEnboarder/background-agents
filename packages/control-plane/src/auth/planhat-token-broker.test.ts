@@ -11,12 +11,15 @@ import {
 } from "./planhat-token-broker";
 
 const NOW = 1_800_000_000_000;
+const AUTOMATION_ASSIGNMENT = { mode: "automation", automationId: "automation-alex" } as const;
+const SLACK_ASSIGNMENT = { mode: "slack-environment", automationId: null } as const;
 
 function record(overrides: Partial<PlanhatOAuthTokenRecord> = {}): PlanhatOAuthTokenRecord {
   return {
     environmentId: "env-alex",
     revision: 1,
     expectedGrant: "conversation-view",
+    assignmentMode: "automation",
     assignedAutomationId: "automation-alex",
     assignmentEnabled: true,
     accessTokenExpiresAt: NOW + 60_000,
@@ -77,7 +80,9 @@ describe("PlanhatOAuthTokenBroker", () => {
     const refresh = vi.fn();
     const broker = new PlanhatOAuthTokenBroker(state.store, logger(), refresh, () => NOW);
 
-    await expect(broker.getAccessToken("env-alex", "automation-alex")).resolves.toBe("access-old");
+    await expect(broker.getAccessToken("env-alex", AUTOMATION_ASSIGNMENT)).resolves.toBe(
+      "access-old"
+    );
     expect(refresh).not.toHaveBeenCalled();
   });
 
@@ -86,7 +91,7 @@ describe("PlanhatOAuthTokenBroker", () => {
     const refresh = vi.fn();
     const broker = new PlanhatOAuthTokenBroker(state.store, logger(), refresh, () => NOW);
 
-    await expect(broker.getAccessToken("env-alex", "automation-alex")).rejects.toBeInstanceOf(
+    await expect(broker.getAccessToken("env-alex", AUTOMATION_ASSIGNMENT)).rejects.toBeInstanceOf(
       PlanhatOAuthAssignmentDisabledError
     );
     expect(refresh).not.toHaveBeenCalled();
@@ -97,9 +102,9 @@ describe("PlanhatOAuthTokenBroker", () => {
     const refresh = vi.fn();
     const broker = new PlanhatOAuthTokenBroker(state.store, logger(), refresh, () => NOW);
 
-    await expect(broker.getAccessToken("env-alex", "automation-other")).rejects.toBeInstanceOf(
-      PlanhatOAuthAssignmentDisabledError
-    );
+    await expect(
+      broker.getAccessToken("env-alex", { mode: "automation", automationId: "automation-other" })
+    ).rejects.toBeInstanceOf(PlanhatOAuthAssignmentDisabledError);
     expect(refresh).not.toHaveBeenCalled();
   });
 
@@ -113,10 +118,15 @@ describe("PlanhatOAuthTokenBroker", () => {
     const log = logger();
     const broker = new PlanhatOAuthTokenBroker(state.store, log, refresh, () => NOW);
 
-    await expect(broker.getAccessToken("env-alex", "automation-alex")).resolves.toBe("access-new");
+    await expect(broker.getAccessToken("env-alex", AUTOMATION_ASSIGNMENT)).resolves.toBe(
+      "access-new"
+    );
     expect(state.store.casUpdateTokens).toHaveBeenCalledOnce();
     expect(state.store.casUpdateTokens).toHaveBeenCalledWith(
-      expect.objectContaining({ expectedAutomationId: "automation-alex" })
+      expect.objectContaining({
+        expectedAssignmentMode: "automation",
+        expectedAutomationId: "automation-alex",
+      })
     );
     expect(state.current?.refreshToken).toBe("refresh-new");
     expect(log.info).toHaveBeenCalledWith("Planhat OAuth tokens rotated", {
@@ -142,8 +152,8 @@ describe("PlanhatOAuthTokenBroker", () => {
     const refresh = vi.fn(() => pending);
     const broker = new PlanhatOAuthTokenBroker(state.store, logger(), refresh, () => NOW);
 
-    const first = broker.getAccessToken("env-concurrent", "automation-alex");
-    const second = broker.getAccessToken("env-concurrent", "automation-alex");
+    const first = broker.getAccessToken("env-concurrent", AUTOMATION_ASSIGNMENT);
+    const second = broker.getAccessToken("env-concurrent", AUTOMATION_ASSIGNMENT);
     release({ access_token: "access-new", refresh_token: "refresh-new", expires_in: 3600 });
 
     await expect(Promise.all([first, second])).resolves.toEqual(["access-new", "access-new"]);
@@ -173,7 +183,7 @@ describe("PlanhatOAuthTokenBroker", () => {
       () => NOW
     );
 
-    await expect(broker.getAccessToken("env-cas", "automation-alex")).resolves.toBe(
+    await expect(broker.getAccessToken("env-cas", AUTOMATION_ASSIGNMENT)).resolves.toBe(
       "access-winner"
     );
   });
@@ -189,9 +199,9 @@ describe("PlanhatOAuthTokenBroker", () => {
       () => NOW
     );
 
-    await expect(broker.getAccessToken("env-storage", "automation-alex")).rejects.toBeInstanceOf(
-      PlanhatOAuthStorageError
-    );
+    await expect(
+      broker.getAccessToken("env-storage", AUTOMATION_ASSIGNMENT)
+    ).rejects.toBeInstanceOf(PlanhatOAuthStorageError);
     const logged = JSON.stringify(vi.mocked(log.error).mock.calls);
     expect(logged).not.toContain("access-new");
     expect(logged).not.toContain("refresh-new");
@@ -210,9 +220,9 @@ describe("PlanhatOAuthTokenBroker", () => {
       () => NOW
     );
 
-    await expect(broker.getAccessToken("env-upstream", "automation-alex")).rejects.toBeInstanceOf(
-      PlanhatOAuthUpstreamError
-    );
+    await expect(
+      broker.getAccessToken("env-upstream", AUTOMATION_ASSIGNMENT)
+    ).rejects.toBeInstanceOf(PlanhatOAuthUpstreamError);
     expect(JSON.stringify(vi.mocked(log.warn).mock.calls)).not.toContain("refresh-old");
   });
 
@@ -229,8 +239,24 @@ describe("PlanhatOAuthTokenBroker", () => {
       () => NOW
     );
 
-    await expect(broker.getAccessToken("env-stale", "automation-alex")).rejects.toBeInstanceOf(
+    await expect(broker.getAccessToken("env-stale", AUTOMATION_ASSIGNMENT)).rejects.toBeInstanceOf(
       PlanhatOAuthConcurrencyError
+    );
+  });
+
+  it("admits only the exact Slack-environment assignment", async () => {
+    const state = tokenStore(
+      record({
+        assignmentMode: "slack-environment",
+        assignedAutomationId: null,
+        accessTokenExpiresAt: NOW + 10 * 60_000,
+      })
+    );
+    const broker = new PlanhatOAuthTokenBroker(state.store, logger(), vi.fn(), () => NOW);
+
+    await expect(broker.getAccessToken("env-alex", SLACK_ASSIGNMENT)).resolves.toBe("access-old");
+    await expect(broker.getAccessToken("env-alex", AUTOMATION_ASSIGNMENT)).rejects.toBeInstanceOf(
+      PlanhatOAuthAssignmentDisabledError
     );
   });
 });
