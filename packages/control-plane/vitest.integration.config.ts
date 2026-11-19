@@ -193,6 +193,61 @@ export default defineConfig({
               if (body.method === "notifications/initialized") {
                 return new Response(null, { status: 202 });
               }
+              if (body.method === "tools/list") {
+                return Response.json({
+                  jsonrpc: "2.0",
+                  id: body.id,
+                  result: {
+                    tools: [
+                      {
+                        name: "search_records",
+                        description: "private provider description",
+                        inputSchema: {
+                          type: "object",
+                          required: ["MODEL", "QUERY"],
+                          properties: {
+                            MODEL: { type: "string" },
+                            QUERY: { type: "string", examples: ["private provider example"] },
+                          },
+                        },
+                      },
+                      {
+                        name: "list_model_records",
+                        inputSchema: {
+                          type: "object",
+                          required: ["MODEL"],
+                          properties: {
+                            MODEL: { type: "string" },
+                            FILTERS: { type: "object" },
+                            LIMIT: { type: "number" },
+                          },
+                        },
+                      },
+                    ],
+                  },
+                });
+              }
+              const toolName = (body.params as { name?: string } | undefined)?.name;
+              if (toolName === "search_records" || toolName === "list_model_records") {
+                return Response.json({
+                  jsonrpc: "2.0",
+                  id: body.id,
+                  result: {
+                    structuredContent: {
+                      records: [
+                        {
+                          _id: "conversation-validation-invented",
+                          companyId: "company-validation-invented",
+                          body: "private invented communication",
+                          address: "invented@example.test",
+                        },
+                      ],
+                      limit: 20,
+                      truncated: false,
+                    },
+                  },
+                });
+              }
               const conversationId = body.params?.arguments?.OBJECT_ID;
               if (conversationId === "must-not-read") {
                 throw new Error("Denied request reached Planhat");
@@ -257,6 +312,12 @@ export default defineConfig({
             WEB_APP_URL: "https://app.test.local",
             WORKER_URL: "https://control.test.local",
             APP_NAME: "Open-Inspect",
+            PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
+            PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: new Date(
+              Date.now() + 60 * 60 * 1000
+            ).toISOString(),
+            PLANHAT_DISCOVERY_VALIDATION_SEARCH_QUERY: "invented validation query",
+            PLANHAT_DISCOVERY_VALIDATION_LIST_COMPANY_ID: "company-validation-invented",
             TEST_MIGRATIONS: migrations,
           },
         },

@@ -1,20 +1,7 @@
 import { readBodyCapped } from "@open-inspect/shared/http-body";
 import { z } from "zod";
 import { Hono } from "hono";
-import {
-  PlanhatOAuthAssignmentDisabledError,
-  PlanhatOAuthConcurrencyError,
-  PlanhatOAuthNotConfiguredError,
-  PlanhatOAuthStorageError,
-  PlanhatOAuthTokenBroker,
-  type PlanhatExpectedAssignment,
-  PlanhatOAuthUpstreamError,
-} from "../auth/planhat-token-broker";
 import { generateId } from "../auth/crypto";
-import { AutomationStore } from "../db/automation-store";
-import { PlanhatOAuthConnectionStore } from "../db/planhat-oauth-connections";
-import { SessionIndexStore } from "../db/session-index";
-import { requireTokenEncryptionKey } from "../env-validation";
 import { createLogger } from "../logger";
 import {
   getExactPlanhatConversation,
@@ -24,6 +11,7 @@ import {
 import { admit, dispatch } from "../routing/admit";
 import type { ControlPlaneHonoEnv } from "../routing/hono-env";
 import type { Env } from "../types";
+import { authorizePlanhatGateway } from "./planhat-gateway-authorization";
 import {
   error,
   json,
@@ -78,104 +66,18 @@ async function handleExactConversation(
 ): Promise<Response> {
   const startedAt = Date.now();
   const correlationId = generateId(16);
-  const sandboxId = ctx.principal.sandboxId ?? null;
-  const headerSandboxId = request.headers.get("X-Sandbox-ID");
-  if (!sandboxId || (headerSandboxId && headerSandboxId !== sandboxId)) {
-    return failure(correlationId, "sandbox", 403, "Wrong sandbox");
-  }
-
   const parsed = await readRequest(request);
   if (parsed instanceof Response) return parsed;
-
-  const connectionStore = new PlanhatOAuthConnectionStore(ctx.db, requireTokenEncryptionKey(env));
-  let session;
-  let connection;
-  try {
-    [session, connection] = await Promise.all([
-      new SessionIndexStore(ctx.db).get(params.id),
-      connectionStore.getMetadataForSession(params.id),
-    ]);
-  } catch {
-    logger.error("Planhat gateway authorization lookup failed", {
-      event: "planhat_gateway.authorization_lookup_failed",
-      correlation_id: correlationId,
-      session_id: params.id,
-      request_id: ctx.request_id,
-      trace_id: ctx.trace_id,
-    });
-    return failure(correlationId, "authorization", 503);
-  }
-
-  if (!session) return failure(correlationId, "authorization", 404, "Session not found");
-  if (!session.environmentId || !connection) {
-    return failure(correlationId, "assignment", 403, "Planhat gateway is not assigned");
-  }
-  if (connection.environmentId !== session.environmentId || !connection.assignmentEnabled) {
-    return failure(correlationId, "assignment", 403, "Planhat gateway is not assigned");
-  }
-
-  let expectedAssignment: PlanhatExpectedAssignment;
-  if (connection.assignmentMode === "automation") {
-    if (!session.automationId || connection.assignedAutomationId !== session.automationId) {
-      return failure(correlationId, "assignment", 403, "Planhat gateway is not assigned");
-    }
-    try {
-      const automations = new AutomationStore(ctx.db);
-      const [automation, environments] = await Promise.all([
-        automations.getById(session.automationId),
-        automations.getEnvironmentsForAutomation(session.automationId),
-      ]);
-      if (
-        !automation ||
-        !environments.some((row) => row.environment_id === session.environmentId)
-      ) {
-        return failure(correlationId, "assignment", 403, "Planhat gateway is not assigned");
-      }
-    } catch {
-      return failure(correlationId, "authorization", 503);
-    }
-    expectedAssignment = { mode: "automation", automationId: session.automationId };
-  } else {
-    const isTopLevelActorBoundSlackSession =
-      session.spawnSource === "slack-bot" &&
-      Boolean(session.userId) &&
-      !session.automationId &&
-      !session.parentSessionId &&
-      session.spawnDepth === 0;
-    if (connection.assignedAutomationId || !isTopLevelActorBoundSlackSession) {
-      return failure(correlationId, "assignment", 403, "Planhat gateway is not assigned");
-    }
-    expectedAssignment = { mode: "slack-environment", automationId: null };
-  }
-
-  let accessToken: string;
-  try {
-    accessToken = await new PlanhatOAuthTokenBroker(connectionStore, logger).getAccessToken(
-      session.environmentId,
-      expectedAssignment
-    );
-  } catch (cause) {
-    const unavailable =
-      cause instanceof PlanhatOAuthStorageError || cause instanceof PlanhatOAuthConcurrencyError;
-    const denied =
-      cause instanceof PlanhatOAuthNotConfiguredError ||
-      cause instanceof PlanhatOAuthAssignmentDisabledError;
-    logger.warn("Planhat gateway credential unavailable", {
-      event: "planhat_gateway.credential_unavailable",
-      correlation_id: correlationId,
-      session_id: params.id,
-      environment_id: session.environmentId,
-      automation_id: session.automationId,
-      assignment_mode: connection.assignmentMode,
-      outcome: denied ? "denied" : unavailable ? "storage" : "upstream",
-      duration_ms: Date.now() - startedAt,
-    });
-    return failure(
-      correlationId,
-      "credential",
-      denied ? 403 : cause instanceof PlanhatOAuthUpstreamError ? 502 : 503
-    );
-  }
+  const authorized = await authorizePlanhatGateway(
+    request,
+    env,
+    params.id,
+    ctx,
+    logger,
+    (stage, status, message) => failure(correlationId, stage, status, message)
+  );
+  if (authorized instanceof Response) return authorized;
+  const { accessToken, environmentId, automationId, assignmentMode } = authorized;
 
   try {
     const result = await getExactPlanhatConversation(accessToken, parsed);
@@ -183,9 +85,9 @@ async function handleExactConversation(
       event: "planhat_gateway.retrieved",
       correlation_id: correlationId,
       session_id: params.id,
-      environment_id: session.environmentId,
-      automation_id: session.automationId,
-      assignment_mode: connection.assignmentMode,
+      environment_id: environmentId,
+      automation_id: automationId,
+      assignment_mode: assignmentMode,
       operation: PLANHAT_MCP_OPERATION,
       outcome: "success",
       response_bytes: result.responseBytes,
@@ -209,9 +111,9 @@ async function handleExactConversation(
       event: "planhat_gateway.failed",
       correlation_id: correlationId,
       session_id: params.id,
-      environment_id: session.environmentId,
-      automation_id: session.automationId,
-      assignment_mode: connection.assignmentMode,
+      environment_id: environmentId,
+      automation_id: automationId,
+      assignment_mode: assignmentMode,
       operation: PLANHAT_MCP_OPERATION,
       stage: transport.stage,
       outcome: transport.outcome,

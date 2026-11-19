@@ -4,6 +4,7 @@ import { AutomationStore, type AutomationRow } from "../../src/db/automation-sto
 import { PlanhatOAuthConnectionStore } from "../../src/db/planhat-oauth-connections";
 import { SessionIndexStore } from "../../src/db/session-index";
 import { PLANHAT_MCP_OPERATION } from "../../src/planhat/exact-conversation-transport";
+import { type PlanhatDiscoveryValidationOperation } from "../../src/planhat/discovery-validation-transport";
 import { cleanD1Tables } from "./cleanup";
 import { initNamedSessionDO, seedActiveUser, seedSandboxAuth, sqlDatabase } from "./helpers";
 
@@ -175,6 +176,24 @@ function gatewayFetch(
           conversationId,
         }
       ),
+    }
+  );
+}
+
+function discoveryValidationFetch(
+  operation: PlanhatDiscoveryValidationOperation,
+  overrides: { body?: unknown; sandboxId?: string; sandboxToken?: string } = {}
+): Promise<Response> {
+  return SELF.fetch(
+    `https://test.local/sessions/${activeSessionId}/planhat-mcp/conversation-discovery-validation`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${overrides.sandboxToken ?? activeSandboxToken}`,
+        "X-Sandbox-ID": overrides.sandboxId ?? activeSandboxId,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(overrides.body ?? { operation }),
     }
   );
 }
@@ -425,5 +444,84 @@ describe("Planhat exact Conversation gateway", () => {
       stage: expectedStage,
     });
     expect(JSON.stringify(body)).not.toMatch(/provider detail|private timeout|integration-planhat/);
+  });
+});
+
+describe("Planhat Conversation discovery validation gateway", () => {
+  beforeEach(async () => {
+    sessionSequence += 1;
+    activeSessionId = `session-alex-cs-validation-${sessionSequence}`;
+    activeSandboxId = `sandbox-alex-cs-validation-${sessionSequence}`;
+    activeSandboxToken = `sandbox-token-alex-cs-validation-${sessionSequence}`;
+    await cleanD1Tables();
+    await seedActiveUser(USER_ID);
+    await seedEnvironment();
+    await seedAutomation();
+    await seedSession();
+    await seedConnection();
+  });
+
+  it.each([
+    "planhat.mcp.validate-conversation-search",
+    "planhat.mcp.validate-conversation-list",
+  ] as const)("returns the exact text-free #245 envelope for %s", async (operation) => {
+    const response = await discoveryValidationFetch(operation);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const body = await response.json<Record<string, unknown>>();
+    expect(Object.keys(body).sort()).toEqual(["correlationId", "observation", "operation"]);
+    expect(body.operation).toBe(operation);
+    const encoded = JSON.stringify(body);
+    expect(encoded).not.toMatch(
+      /private invented|example\.test|conversation-validation-invented|company-validation-invented|validation query|provider description|provider example|integration-planhat/
+    );
+    expect(body.observation).toMatchObject({
+      schema: { inputFields: expect.any(Array), outputFields: expect.any(Array) },
+      response: {
+        byteLength: expect.any(Number),
+        recordCount: 1,
+        candidateLimit: 20,
+        truncated: false,
+        continuationPresent: null,
+        identityShapes: expect.any(Array),
+      },
+    });
+  });
+
+  it("rejects generic MCP, caller tools, models, fields, raw queries, mutation, redirects, and retries", async () => {
+    const rejected = [
+      { operation: "tools/list" },
+      { operation: "update_model_record" },
+      { operation: "planhat.mcp.validate-conversation-search", tool: "search_records" },
+      { operation: "planhat.mcp.validate-conversation-search", model: "Company" },
+      { operation: "planhat.mcp.validate-conversation-search", fields: ["body"] },
+      { operation: "planhat.mcp.validate-conversation-search", rawQuery: "private" },
+      { operation: "planhat.mcp.validate-conversation-search", redirect: "follow" },
+      { operation: "planhat.mcp.validate-conversation-search", retries: 1 },
+    ];
+    for (const candidate of rejected) {
+      expect(
+        (
+          await discoveryValidationFetch("planhat.mcp.validate-conversation-search", {
+            body: candidate,
+          })
+        ).status
+      ).toBe(400);
+    }
+  });
+
+  it("requires the matching sandbox and active assignment before provider access", async () => {
+    expect(
+      (
+        await discoveryValidationFetch("planhat.mcp.validate-conversation-search", {
+          sandboxId: "wrong-sandbox",
+        })
+      ).status
+    ).toBe(403);
+    const store = new PlanhatOAuthConnectionStore(sqlDatabase(env.DB), env.TOKEN_ENCRYPTION_KEY);
+    await store.setAssignment(ENVIRONMENT_ID, false, "automation", null, 2);
+    expect(
+      (await discoveryValidationFetch("planhat.mcp.validate-conversation-search")).status
+    ).toBe(403);
   });
 });
