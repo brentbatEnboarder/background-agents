@@ -90,6 +90,9 @@ class FakeStatement implements SqlStatement {
   }
 
   first<T = Record<string, unknown>>(): Promise<T | null> {
+    if (this.query === "SELECT * FROM sessions WHERE id = ?") {
+      return Promise.resolve((this.db.sessionIndexRow as T | null) ?? null);
+    }
     if (this.query.includes("FROM model_provider_accounts")) {
       return Promise.resolve((this.db.accountRow as T | null) ?? null);
     }
@@ -113,6 +116,7 @@ class FakeSqlDatabase implements SqlDatabase {
   providerAuthRows: D1Row[] = [];
   /** The bound provider account the pre-spawn check reads; null means removed. */
   accountRow: D1Row | null = null;
+  sessionIndexRow: D1Row | null = null;
   globalSecretRows: D1Row[] = [];
   readonly repoSecretRowsByRepoId = new Map<number, D1Row[]>();
   readonly environmentSecretRowsById = new Map<string, D1Row[]>();
@@ -220,6 +224,36 @@ function sessionRow(overrides: Partial<SessionRow> = {}): SessionRow {
   };
 }
 
+function sessionIndexRow(overrides: D1Row = {}): D1Row {
+  return {
+    id: "sess-public-1",
+    title: null,
+    repo_owner: null,
+    repo_name: null,
+    harness: "opencode",
+    model: "anthropic/claude-sonnet-4-5",
+    reasoning_effort: null,
+    base_branch: null,
+    status: "active",
+    parent_session_id: null,
+    root_session_id: "sess-public-1",
+    spawn_source: "slack-bot",
+    spawn_depth: 0,
+    automation_id: null,
+    automation_run_id: null,
+    scm_login: null,
+    user_id: "a".repeat(32),
+    total_cost: 0,
+    active_duration_ms: 0,
+    message_count: 0,
+    pr_count: 0,
+    environment_id: "env-alex-invented",
+    created_at: Date.parse("2026-11-19T10:00:00.001Z"),
+    updated_at: Date.parse("2026-11-19T10:00:00.001Z"),
+    ...overrides,
+  };
+}
+
 function memberRow(
   position: number,
   repoOwner: string,
@@ -247,6 +281,7 @@ function makeHarness(
     /** Omit to model an unset SECRETS_CAP_ENFORCEMENT (fail-closed enforce). */
     capEnforcement?: string;
     discoveryValidationEnv?: Partial<Env>;
+    indexedSession?: D1Row | null;
     now?: () => number;
     resolveRepoId?: (session: SessionRow) => Promise<number>;
   } = {}
@@ -254,6 +289,8 @@ function makeHarness(
   const session = options.session === undefined ? sessionRow() : options.session;
   const storage = fakeSqlStorage({ session, memberRows: options.memberRows ?? [] });
   const db = new FakeSqlDatabase();
+  db.sessionIndexRow =
+    options.indexedSession === undefined ? sessionIndexRow() : options.indexedSession;
   const logs: LogEntry[] = [];
   const log = recordingLogger(logs);
   const sessionCoreRepository = new SessionCoreRepository(storage.sql, (closure) => closure());
@@ -360,30 +397,78 @@ describe("UserEnvResolver", () => {
     });
 
     it.each([
+      ["actorless", { user_id: null }],
+      ["missing actor", { user_id: undefined }],
+      ["noncanonical actor", { user_id: "slack:U123" }],
+      ["automation-linked", { automation_id: "automation-invented" }],
+      ["missing automation field", { automation_id: undefined }],
       ["pre-existing", { created_at: Date.parse("2026-11-19T09:59:59.999Z") }],
       ["boundary-equal", { created_at: Date.parse("2026-11-19T10:00:00.000Z") }],
       ["clock-ahead", { created_at: now + 1 }],
-      ["missing timestamp", { created_at: null as unknown as number }],
+      ["missing timestamp", { created_at: null }],
       ["invalid timestamp", { created_at: Number.NaN }],
       ["child", { parent_session_id: "parent", spawn_depth: 1 }],
-      ["non-Slack", { spawn_source: "user" as const }],
-    ])("does not inject the window for %s session provenance", async (_name, overrides) => {
+      ["web/user", { spawn_source: "user" }],
+      ["repository", { repo_owner: "invented", repo_name: "repository" }],
+      ["wrong environment", { environment_id: "env-other" }],
+    ])("does not inject any tuple key for %s session provenance", async (_name, overrides) => {
+      const indexedSession = sessionIndexRow(overrides);
       const h = makeHarness({
         session: sessionRow({
-          environment_id: "env-alex-invented",
-          spawn_source: "slack-bot",
-          repo_owner: null,
-          repo_name: null,
+          environment_id: indexedSession.environment_id as string | null,
+          spawn_source: indexedSession.spawn_source as SessionRow["spawn_source"],
+          parent_session_id: indexedSession.parent_session_id as string | null,
+          spawn_depth: indexedSession.spawn_depth as number,
+          repo_owner: indexedSession.repo_owner as string | null,
+          repo_name: indexedSession.repo_name as string | null,
           repo_id: null,
-          created_at: Date.parse("2026-11-19T10:00:00.001Z"),
-          ...overrides,
+          created_at: indexedSession.created_at as number,
         }),
+        indexedSession,
         discoveryValidationEnv: validWindow,
         now: () => now,
       });
       h.db.providerAuthRows = providerAuthRows(API_KEY_MODES);
       await expect(h.resolver.getUserEnvVars(true)).resolves.toBeUndefined();
     });
+
+    it.each([
+      ["missing indexed session", null, {}],
+      ["ambiguous environment", sessionIndexRow(), { environment_id: "env-other" }],
+      ["ambiguous spawn source", sessionIndexRow(), { spawn_source: "user" as const }],
+      ["ambiguous parent", sessionIndexRow(), { parent_session_id: "other-parent" }],
+      ["ambiguous depth", sessionIndexRow(), { spawn_depth: 1 }],
+      ["ambiguous repository", sessionIndexRow(), { repo_owner: "other", repo_name: "repo" }],
+      ["repository id", sessionIndexRow(), { repo_id: 90101 }],
+      ["repository member", sessionIndexRow(), {}],
+    ])(
+      "does not inject any tuple key for %s provenance",
+      async (name, indexedSession, localOverrides) => {
+        const h = makeHarness({
+          session: sessionRow({
+            environment_id: "env-alex-invented",
+            spawn_source: "slack-bot",
+            repo_owner: null,
+            repo_name: null,
+            repo_id: null,
+            created_at: now,
+            ...localOverrides,
+          }),
+          memberRows:
+            name === "repository member" ? [memberRow(0, "invented", "repository", 90101)] : [],
+          indexedSession,
+          discoveryValidationEnv: validWindow,
+          now: () => now,
+        });
+        h.db.providerAuthRows = providerAuthRows(API_KEY_MODES);
+        const result = await h.resolver.getUserEnvVars(true);
+        expect(
+          Object.keys(result ?? {}).filter((key) =>
+            key.startsWith("CS_PLANHAT_DISCOVERY_VALIDATION_")
+          )
+        ).toEqual([]);
+      }
+    );
 
     it("does not inject the window into restore/resume env resolution", async () => {
       const h = makeHarness({

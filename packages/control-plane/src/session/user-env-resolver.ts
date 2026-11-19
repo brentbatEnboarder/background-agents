@@ -167,9 +167,12 @@ export class UserEnvResolver {
     }
 
     const db = this.db;
-    const providerAuth = await new SessionIndexStore(db).getCompleteProviderAuth(
-      resolvePublicSessionId(session, this.durableObjectId)
-    );
+    const publicSessionId = resolvePublicSessionId(session, this.durableObjectId);
+    const sessionIndex = new SessionIndexStore(db);
+    const [providerAuth, indexedSession] = await Promise.all([
+      sessionIndex.getCompleteProviderAuth(publicSessionId),
+      includeFreshValidationWindow ? sessionIndex.get(publicSessionId) : Promise.resolve(null),
+    ]);
     const providerAuthModes = Object.fromEntries(
       providerAuth.map(({ provider, authMode }) => [provider, authMode])
     ) as Record<SubscriptionProviderId, SessionProviderAuthMode>;
@@ -189,6 +192,9 @@ export class UserEnvResolver {
     const repoStore = new RepoSecretsStore(db, encryptionKey);
     const environmentSecretsStore = new EnvironmentSecretsStore(db, encryptionKey);
     const members = this.sessionCoreRepository.getSessionRepositories();
+    const repositoryCount = includeFreshValidationWindow
+      ? this.sessionCoreRepository.getSessionRepositoryRows().length
+      : members.length;
     const sources = await buildSessionTargetSecretSources({
       environmentId: session.environment_id,
       globalSecrets,
@@ -232,19 +238,31 @@ export class UserEnvResolver {
     });
     for (const name of CS_PLANHAT_DISCOVERY_VALIDATION_WINDOW_NAMES) delete sandboxEnv[name];
     const discoveryValidationEnv = includeFreshValidationWindow
-      ? resolvePlanhatDiscoveryValidationSandboxEnv(
-          this.discoveryValidationEnv,
-          {
-            environmentId: session.environment_id,
-            spawnSource: session.spawn_source,
-            parentSessionId: session.parent_session_id,
-            spawnDepth: session.spawn_depth,
-            repoOwner: session.repo_owner,
-            repoName: session.repo_name,
-            createdAt: session.created_at,
-          },
-          this.now()
-        )
+      ? indexedSession &&
+        indexedSession.environmentId === session.environment_id &&
+        indexedSession.spawnSource === session.spawn_source &&
+        indexedSession.parentSessionId === session.parent_session_id &&
+        indexedSession.spawnDepth === session.spawn_depth &&
+        indexedSession.repoOwner === session.repo_owner &&
+        indexedSession.repoName === session.repo_name
+        ? resolvePlanhatDiscoveryValidationSandboxEnv(
+            this.discoveryValidationEnv,
+            {
+              environmentId: indexedSession.environmentId,
+              spawnSource: indexedSession.spawnSource,
+              userId: indexedSession.userId,
+              automationId: indexedSession.automationId,
+              parentSessionId: indexedSession.parentSessionId,
+              spawnDepth: indexedSession.spawnDepth,
+              repoOwner: indexedSession.repoOwner,
+              repoName: indexedSession.repoName,
+              repoId: session.repo_id,
+              repositoryCount,
+              createdAt: indexedSession.createdAt,
+            },
+            this.now()
+          )
+        : null
       : null;
     if (discoveryValidationEnv) Object.assign(sandboxEnv, discoveryValidationEnv);
     return { sandboxEnv, providerAuthModes, providerAccountIds };

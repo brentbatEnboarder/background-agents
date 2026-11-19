@@ -1,4 +1,5 @@
 import type { Env } from "../types";
+import { isCanonicalUserId } from "@open-inspect/shared/user-id";
 
 const MAX_AUTHORIZATION_WINDOW_MS = 30 * 60 * 1000;
 const CANONICAL_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
@@ -35,10 +36,14 @@ export interface PlanhatDiscoveryValidationWindow {
 export interface PlanhatDiscoveryValidationSessionProvenance {
   environmentId: string | null;
   spawnSource: string;
+  userId: string | null | undefined;
+  automationId: string | null | undefined;
   parentSessionId: string | null;
   spawnDepth: number;
   repoOwner: string | null;
   repoName: string | null;
+  repoId: number | null;
+  repositoryCount: number;
   createdAt: number;
 }
 
@@ -96,10 +101,14 @@ export function resolvePlanhatDiscoveryValidationSandboxEnv(
     !window ||
     session.environmentId !== window.environmentId ||
     session.spawnSource !== "slack-bot" ||
+    !isCanonicalUserId(session.userId) ||
+    session.automationId !== null ||
     session.parentSessionId !== null ||
     session.spawnDepth !== 0 ||
     session.repoOwner !== null ||
     session.repoName !== null ||
+    session.repoId !== null ||
+    session.repositoryCount !== 0 ||
     !Number.isSafeInteger(session.createdAt) ||
     session.createdAt <= window.issuedAt ||
     session.createdAt > now ||

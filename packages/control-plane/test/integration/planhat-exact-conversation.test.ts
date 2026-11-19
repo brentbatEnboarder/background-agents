@@ -9,7 +9,14 @@ import {
   type PlanhatDiscoveryValidationOperation,
 } from "../../src/planhat/discovery-validation-transport";
 import { cleanD1Tables } from "./cleanup";
-import { initNamedSessionDO, seedActiveUser, seedSandboxAuth, sqlDatabase } from "./helpers";
+import {
+  initNamedSessionDO,
+  seedActiveUser,
+  seedSandboxAuth,
+  sqlDatabase,
+  TEST_SESSION_PROVIDER_AUTH,
+} from "./helpers";
+import { getUserEnvVars } from "./session-do-access";
 import {
   COMPACT_DISCOVERY_OVERFLOW_RECORD_COUNT,
   compactDiscoveryOverflowJsonRpc,
@@ -83,9 +90,10 @@ async function seedSession(
     spawnDepth?: number;
     repoOwner?: string | null;
     repoName?: string | null;
+    repoId?: number | null;
     createdAt?: number;
   } = {}
-): Promise<void> {
+): Promise<DurableObjectStub> {
   const sessionId = input.sessionId ?? activeSessionId;
   const now =
     input.createdAt ??
@@ -110,14 +118,27 @@ async function seedSession(
         : input.automationId,
     userId: input.userId ?? null,
     environmentId: input.environmentId ?? ENVIRONMENT_ID,
+    providerAuth: TEST_SESSION_PROVIDER_AUTH,
     createdAt: now,
     updatedAt: now,
   });
-  const { stub } = await initNamedSessionDO(sessionId);
+  const { stub } = await initNamedSessionDO(sessionId, {
+    environmentId: input.environmentId ?? ENVIRONMENT_ID,
+    repoOwner: input.repoOwner ?? null,
+    repoName: input.repoName ?? null,
+    repoId: input.repoOwner && input.repoName ? (input.repoId ?? 12345) : null,
+    defaultBranch: input.repoOwner && input.repoName ? "main" : null,
+    spawnSource: input.spawnSource ?? "automation",
+    parentSessionId: input.parentSessionId ?? null,
+    spawnDepth: input.spawnDepth ?? 0,
+    createdAt: now,
+    userId: input.userId ?? "integration-actor",
+  });
   await seedSandboxAuth(stub, {
     authToken: input.sandboxToken ?? activeSandboxToken,
     sandboxId: input.sandboxId ?? activeSandboxId,
   });
+  return stub;
 }
 
 async function seedConnection(
@@ -681,6 +702,78 @@ describe("Planhat Conversation discovery validation gateway", () => {
         })
       ).status
     ).toBe(403);
+  });
+
+  it("exposes the complete tuple only to one fresh canonical Alex Slack session", async () => {
+    const ineligible = [
+      { id: "tuple-actorless", userId: null },
+      { id: "tuple-noncanonical", userId: "slack:U123" },
+      { id: "tuple-automation-linked", userId: USER_ID, automationId: AUTOMATION_ID },
+      { id: "tuple-web", userId: USER_ID, spawnSource: "user" as const },
+      {
+        id: "tuple-child",
+        userId: USER_ID,
+        spawnSource: "slack-bot" as const,
+        parentSessionId: activeSessionId,
+        spawnDepth: 1,
+      },
+      {
+        id: "tuple-repository",
+        userId: USER_ID,
+        spawnSource: "slack-bot" as const,
+        repoOwner: "invented",
+        repoName: "repository",
+        repoId: 12345,
+      },
+      {
+        id: "tuple-pre-window",
+        userId: USER_ID,
+        spawnSource: "slack-bot" as const,
+        createdAt: Date.parse(env.PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT!) - 1,
+      },
+    ];
+
+    for (const candidate of ineligible) {
+      const stub = await seedSession({
+        ...candidate,
+        sessionId: candidate.id,
+        spawnSource: candidate.spawnSource ?? "slack-bot",
+      });
+      const sandboxEnv = await getUserEnvVars(stub, true);
+      expect(
+        Object.keys(sandboxEnv ?? {}).filter((key) =>
+          key.startsWith("CS_PLANHAT_DISCOVERY_VALIDATION_")
+        ),
+        candidate.id
+      ).toEqual([]);
+    }
+
+    const otherEnvironment = "env-planhat-tuple-other";
+    await seedEnvironment(otherEnvironment);
+    const wrongEnvironmentStub = await seedSession({
+      sessionId: "tuple-wrong-environment",
+      spawnSource: "slack-bot",
+      userId: USER_ID,
+      environmentId: otherEnvironment,
+    });
+    expect(
+      Object.keys((await getUserEnvVars(wrongEnvironmentStub, true)) ?? {}).filter((key) =>
+        key.startsWith("CS_PLANHAT_DISCOVERY_VALIDATION_")
+      )
+    ).toEqual([]);
+
+    const qualifyingStub = await seedSession({
+      sessionId: "tuple-qualifying",
+      spawnSource: "slack-bot",
+      userId: USER_ID,
+    });
+    await expect(getUserEnvVars(qualifyingStub, false)).resolves.toBeUndefined();
+    await expect(getUserEnvVars(qualifyingStub, true)).resolves.toEqual({
+      CS_PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
+      CS_PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT: env.PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT,
+      CS_PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: env.PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT,
+      CS_PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID: "window-invented",
+    });
   });
 
   it("turns the prior direct automation-sandbox bypass into a fail-closed denial", async () => {
