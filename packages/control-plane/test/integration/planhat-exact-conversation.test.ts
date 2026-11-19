@@ -586,7 +586,7 @@ describe("Planhat Conversation discovery validation gateway", () => {
       expect(
         (
           await discoveryValidationFetch("planhat.mcp.validate-conversation-search", {
-            body: candidate,
+            body: { windowId: "window-invented", ...candidate },
           })
         ).status
       ).toBe(400);
