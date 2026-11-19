@@ -24,6 +24,7 @@ import { modelPreferencesRoutes } from "./model-preferences";
 import { modelProviderAccountRoutes } from "./model-provider-accounts";
 import { planhatOAuthRoutes } from "./planhat-oauth";
 import { planhatExactConversationRoutes } from "./planhat-exact-conversation";
+import { planhatDiscoveryValidationRoutes } from "./planhat-discovery-validation";
 import { providerRuntimeCredentialRoutes } from "./provider-runtime-credentials";
 import { rbacRoutes } from "./rbac";
 import { reposRoutes } from "./repos";
@@ -67,8 +68,9 @@ export const catalog: readonly RouteModule[] = [
   providerRuntimeCredentialRoutes,
   // Environment-scoped Planhat OAuth custody (no MCP tools are exposed here)
   planhatOAuthRoutes,
-  // Fixed sandbox-authenticated Planhat Conversation retrieval only
+  // Fixed sandbox-authenticated Planhat Conversation routes
   planhatExactConversationRoutes,
+  planhatDiscoveryValidationRoutes,
 
   // Integration settings
   integrationSettingsRoutes,

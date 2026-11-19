@@ -16,11 +16,11 @@ function routeFor(method: string, path: string) {
 
 describe("route policy table", () => {
   it("publishes the complete canonical route catalog", () => {
-    expect(routes).toHaveLength(185);
+    expect(routes).toHaveLength(186);
 
     const paths = routes.map((route) => route.path);
-    expect(new Set(paths).size).toBe(142);
-    expect(new Set(routes.map((route) => `${route.method}:${route.path}`)).size).toBe(185);
+    expect(new Set(paths).size).toBe(143);
+    expect(new Set(routes.map((route) => `${route.method}:${route.path}`)).size).toBe(186);
   });
 
   it("declares every path in the literal-or-parameter grammar", () => {
@@ -337,6 +337,7 @@ describe("route policy table", () => {
     ["POST", "/sessions/session-1/provider-auth/openai/access-token"],
     ["POST", "/sessions/session-1/provider-auth/anthropic/runtime-credential"],
     ["POST", "/sessions/session-1/planhat-mcp/conversation-messages"],
+    ["POST", "/sessions/session-1/planhat-mcp/conversation-discovery-validation"],
   ])("requires the bound sandbox for %s %s", (method, path) => {
     const { route, params } = matchRoute(routes, method, path)!;
     expect(route.authentication.kind).toBe("sandbox");
@@ -396,6 +397,10 @@ describe("route policy table", () => {
     ).toBe("no-store");
     expect(
       routeFor("POST", "/sessions/session-1/planhat-mcp/conversation-messages")?.cacheControl
+    ).toBe("no-store");
+    expect(
+      routeFor("POST", "/sessions/session-1/planhat-mcp/conversation-discovery-validation")
+        ?.cacheControl
     ).toBe("no-store");
   });
 

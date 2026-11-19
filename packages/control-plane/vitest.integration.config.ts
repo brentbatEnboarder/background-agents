@@ -3,6 +3,7 @@ import { defineConfig } from "vitest/config";
 import path from "path";
 import { webcrypto } from "node:crypto";
 import { createRequire } from "node:module";
+import { compactDiscoveryOverflowJsonRpc } from "./test/integration/planhat-discovery-fixtures";
 
 const migrationsPath = path.resolve(__dirname, "../../terraform/d1/migrations");
 
@@ -193,6 +194,116 @@ export default defineConfig({
               if (body.method === "notifications/initialized") {
                 return new Response(null, { status: 202 });
               }
+              if (body.method === "tools/list") {
+                return Response.json({
+                  jsonrpc: "2.0",
+                  id: body.id,
+                  result: {
+                    tools: [
+                      {
+                        name: "search_records",
+                        description: "private provider description",
+                        inputSchema: {
+                          type: "object",
+                          required: ["MODEL", "QUERY", "Acme_Corporation"],
+                          properties: {
+                            MODEL: { type: "string" },
+                            QUERY: {
+                              type: "string",
+                              examples: ["private provider example"],
+                              required: ["brent.pearson@example.test"],
+                              properties: {
+                                "brent.pearson@example.test": { type: "string" },
+                                "123_Main_Street_Sydney": { type: "string" },
+                              },
+                            },
+                            Acme_Corporation: { type: "string" },
+                            "507f1f77bcf86cd799439011": { type: "string" },
+                            BrentPearson: { type: "string" },
+                          },
+                        },
+                      },
+                      {
+                        name: "list_model_records",
+                        inputSchema: {
+                          type: "object",
+                          required: ["MODEL"],
+                          properties: {
+                            MODEL: { type: "string" },
+                            FILTERS: { type: "object" },
+                            LIMIT: { type: "number" },
+                          },
+                        },
+                      },
+                      {
+                        name: "get_model_record",
+                        inputSchema: {
+                          type: "object",
+                          required: ["MODEL", "OBJECT_ID", "507f1f77bcf86cd799439011"],
+                          properties: {
+                            MODEL: { type: "string" },
+                            OBJECT_ID: { type: "string" },
+                            SELECT: {
+                              type: "array",
+                              required: ["123_Main_Street_Sydney"],
+                              properties: {
+                                "123_Main_Street_Sydney": { type: "string" },
+                                "brent.pearson@example.test": { type: "string" },
+                              },
+                            },
+                            Acme_Corporation: { type: "string" },
+                            "507f1f77bcf86cd799439011": { type: "string" },
+                            BrentPearson: { type: "string" },
+                          },
+                        },
+                      },
+                    ],
+                  },
+                });
+              }
+              const toolName = (body.params as { name?: string } | undefined)?.name;
+              if (toolName === "list_model_records") {
+                return new Response(compactDiscoveryOverflowJsonRpc(body.id ?? 3), {
+                  headers: { "content-type": "application/json" },
+                });
+              }
+              if (toolName === "search_records") {
+                return Response.json({
+                  jsonrpc: "2.0",
+                  id: body.id,
+                  result: {
+                    structuredContent: {
+                      records: [
+                        {
+                          _id: "conversation-validation-invented",
+                          companyId: "company-validation-invented",
+                          body: "private invented communication",
+                          address: "invented@example.test",
+                        },
+                      ],
+                      limit: 20,
+                      truncated: false,
+                    },
+                  },
+                });
+              }
+              if (
+                toolName === "get_model_record" &&
+                body.params?.arguments?.OBJECT_ID === "conversation-validation-invented"
+              ) {
+                return Response.json({
+                  jsonrpc: "2.0",
+                  id: body.id,
+                  result: {
+                    structuredContent: {
+                      _id: "conversation-validation-invented",
+                      companyId: "company-validation-invented",
+                      body: "private invented communication",
+                      address: "invented@example.test",
+                    },
+                  },
+                });
+              }
               const conversationId = body.params?.arguments?.OBJECT_ID;
               if (conversationId === "must-not-read") {
                 throw new Error("Denied request reached Planhat");
@@ -257,6 +368,15 @@ export default defineConfig({
             WEB_APP_URL: "https://app.test.local",
             WORKER_URL: "https://control.test.local",
             APP_NAME: "Open-Inspect",
+            PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
+            PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: new Date(
+              Date.now() + 30 * 60 * 1000
+            ).toISOString(),
+            PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID: "env-planhat-gateway",
+            PLANHAT_DISCOVERY_VALIDATION_SEARCH_QUERY: "invented validation query",
+            PLANHAT_DISCOVERY_VALIDATION_LIST_COMPANY_ID: "company-validation-invented",
+            PLANHAT_DISCOVERY_VALIDATION_GET_COMPANY_ID: "company-validation-invented",
+            PLANHAT_DISCOVERY_VALIDATION_GET_CONVERSATION_ID: "conversation-validation-invented",
             TEST_MIGRATIONS: migrations,
           },
         },
