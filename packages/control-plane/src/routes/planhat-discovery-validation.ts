@@ -25,7 +25,7 @@ import {
 const logger = createLogger("router:planhat-discovery-validation");
 const REQUEST_MAX_BYTES = 256;
 const RESPONSE_MAX_BYTES = 256 * 1024;
-const MAX_AUTHORIZATION_WINDOW_MS = 24 * 60 * 60 * 1000;
+const MAX_AUTHORIZATION_WINDOW_MS = 30 * 60 * 1000;
 const SAFE_PLANHAT_ID = /^[A-Za-z0-9][A-Za-z0-9-]{0,199}$/;
 
 const requestSchema = z

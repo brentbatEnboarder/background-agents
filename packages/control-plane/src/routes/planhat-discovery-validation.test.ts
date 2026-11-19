@@ -21,7 +21,7 @@ describe("Planhat discovery validation route configuration", () => {
         NOW
       )
     ).toBeNull();
-    for (const expiresAt of ["invalid", "2026-11-19T10:00:00.000Z", "2026-11-20T10:00:00.001Z"]) {
+    for (const expiresAt of ["invalid", "2026-11-19T10:00:00.000Z", "2026-11-19T10:30:00.001Z"]) {
       expect(
         readPlanhatDiscoveryValidationConfiguration(
           {
@@ -39,7 +39,7 @@ describe("Planhat discovery validation route configuration", () => {
   it("accepts only the operation-specific operator probe", () => {
     const base = {
       PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
-      PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2026-11-19T11:00:00.000Z",
+      PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2026-11-19T10:30:00.000Z",
     };
     expect(
       readPlanhatDiscoveryValidationConfiguration(
@@ -49,7 +49,7 @@ describe("Planhat discovery validation route configuration", () => {
       )
     ).toEqual({
       operation: "planhat.mcp.validate-conversation-search",
-      expiresAt: Date.parse("2026-11-19T11:00:00.000Z"),
+      expiresAt: Date.parse("2026-11-19T10:30:00.000Z"),
       probe: { searchQuery: "invented query" },
     });
     expect(
@@ -60,7 +60,7 @@ describe("Planhat discovery validation route configuration", () => {
       )
     ).toEqual({
       operation: "planhat.mcp.validate-conversation-list",
-      expiresAt: Date.parse("2026-11-19T11:00:00.000Z"),
+      expiresAt: Date.parse("2026-11-19T10:30:00.000Z"),
       probe: { listCompanyId: "company-invented" },
     });
     expect(
@@ -75,7 +75,7 @@ describe("Planhat discovery validation route configuration", () => {
       )
     ).toEqual({
       operation: "planhat.mcp.validate-conversation-get",
-      expiresAt: Date.parse("2026-11-19T11:00:00.000Z"),
+      expiresAt: Date.parse("2026-11-19T10:30:00.000Z"),
       probe: {
         getCompanyId: "company-invented",
         getConversationId: "conversation-invented",
@@ -91,7 +91,7 @@ describe("Planhat discovery validation route configuration", () => {
 
 const ROUTE_ENVIRONMENT = {
   PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
-  PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2026-11-19T11:00:00.000Z",
+  PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2026-11-19T10:30:00.000Z",
   PLANHAT_DISCOVERY_VALIDATION_SEARCH_QUERY: "invented query",
 } as unknown as Env;
 
@@ -144,6 +144,24 @@ describe("Planhat discovery validation route failures", () => {
     );
     expect(response.status).toBe(403);
     expect(dependencies.authorizeGateway).not.toHaveBeenCalled();
+    expect(dependencies.observe).not.toHaveBeenCalled();
+  });
+
+  it("rechecks expiry after gateway authorization and before provider access", async () => {
+    const dependencies = routeDependencies(vi.fn());
+    dependencies.now
+      .mockReturnValueOnce(NOW)
+      .mockReturnValueOnce(NOW)
+      .mockReturnValueOnce(Date.parse(ROUTE_ENVIRONMENT.PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT!));
+    const response = await handleDiscoveryValidation(
+      routeRequest(),
+      ROUTE_ENVIRONMENT,
+      { id: "session-invented" },
+      ROUTE_CONTEXT,
+      dependencies as never
+    );
+    expect(response.status).toBe(403);
+    expect(dependencies.authorizeGateway).toHaveBeenCalledOnce();
     expect(dependencies.observe).not.toHaveBeenCalled();
   });
 

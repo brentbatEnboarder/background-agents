@@ -370,7 +370,7 @@ export default defineConfig({
             APP_NAME: "Open-Inspect",
             PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
             PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: new Date(
-              Date.now() + 60 * 60 * 1000
+              Date.now() + 30 * 60 * 1000
             ).toISOString(),
             PLANHAT_DISCOVERY_VALIDATION_SEARCH_QUERY: "invented validation query",
             PLANHAT_DISCOVERY_VALIDATION_LIST_COMPANY_ID: "company-validation-invented",
