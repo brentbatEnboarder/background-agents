@@ -20,8 +20,20 @@ const MAX_SCHEMA_FIELDS = 200;
 const MAX_IDENTITY_SHAPES = 20;
 const MAX_FIELD_PATH_LENGTH = 240;
 const MAX_FIELD_DEPTH = 20;
-const SAFE_SCHEMA_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,127}$/;
 const DYNAMIC_SCHEMA_KEY = "__dynamic__";
+interface ReviewedInputSchema {
+  readonly [name: string]: ReviewedInputSchema;
+}
+// Keep this operation-specific: only names used by the three fixed probes may cross the boundary.
+const REVIEWED_INPUT_SCHEMA_KEYS: Record<PlanhatDiscoverySchemaOperation, ReviewedInputSchema> = {
+  "planhat.mcp.validate-conversation-search": { MODEL: {}, QUERY: {}, LIMIT: {} },
+  "planhat.mcp.validate-conversation-list": {
+    MODEL: {},
+    FILTERS: { companyId: {} },
+    LIMIT: {},
+  },
+  "planhat.mcp.validate-conversation-get": { MODEL: {}, OBJECT_ID: {}, SELECT: {} },
+};
 // These are the only output keys established by the reviewed exact-get contract.
 const REVIEWED_OUTPUT_SCHEMA_KEYS = new Set(["_id", "companyId", "numberOfParts", "parts"]);
 
@@ -178,6 +190,77 @@ function schemaType(value: unknown): string {
   return "object";
 }
 
+function projectInputFields(
+  schema: Record<string, unknown>,
+  reviewed: ReviewedInputSchema,
+  path = "$",
+  depth = 0
+): PlanhatDiscoverySchemaObservation["inputFields"] {
+  if (depth > MAX_FIELD_DEPTH || path.length > MAX_FIELD_PATH_LENGTH) {
+    throw new PlanhatDiscoverySchemaTransportError("parse", "malformed");
+  }
+  const properties = schema.properties;
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) {
+    throw new PlanhatDiscoverySchemaTransportError("parse", "malformed");
+  }
+  const entries = Object.entries(properties);
+  if (entries.length > MAX_SCHEMA_FIELDS) {
+    throw new PlanhatDiscoverySchemaTransportError("parse", "malformed");
+  }
+  if (
+    schema.required !== undefined &&
+    (!Array.isArray(schema.required) || !schema.required.every((item) => typeof item === "string"))
+  ) {
+    throw new PlanhatDiscoverySchemaTransportError("parse", "malformed");
+  }
+  const required = new Set((schema.required as string[] | undefined) ?? []);
+  const propertyNames = new Set(entries.map(([name]) => name));
+  if ([...required].some((name) => !propertyNames.has(name))) {
+    throw new PlanhatDiscoverySchemaTransportError("parse", "malformed");
+  }
+
+  const fields: PlanhatDiscoverySchemaObservation["inputFields"] = [];
+  for (const [name, children] of Object.entries(reviewed)) {
+    if (!propertyNames.has(name)) continue;
+    const definition = (properties as Record<string, unknown>)[name];
+    const fieldPath = `${path}.${name}`;
+    fields.push({
+      path: fieldPath,
+      type: schemaType(
+        definition && typeof definition === "object" && !Array.isArray(definition)
+          ? (definition as Record<string, unknown>).type
+          : undefined
+      ),
+      required: required.has(name),
+    });
+    if (
+      definition &&
+      typeof definition === "object" &&
+      !Array.isArray(definition) &&
+      (definition as Record<string, unknown>).properties !== undefined
+    ) {
+      fields.push(
+        ...projectInputFields(definition as Record<string, unknown>, children, fieldPath, depth + 1)
+      );
+    }
+  }
+
+  const unknownNames = entries
+    .map(([name]) => name)
+    .filter((name) => !Object.hasOwn(reviewed, name));
+  if (unknownNames.length > 0) {
+    fields.push({
+      path: `${path}.${DYNAMIC_SCHEMA_KEY}`,
+      type: "object",
+      required: unknownNames.some((name) => required.has(name)),
+    });
+  }
+  if (fields.length > MAX_SCHEMA_FIELDS) {
+    throw new PlanhatDiscoverySchemaTransportError("parse", "malformed");
+  }
+  return fields;
+}
+
 function projectSchema(
   result: unknown,
   operation: PlanhatDiscoverySchemaOperation
@@ -201,35 +284,20 @@ function projectSchema(
   if (!inputSchema || typeof inputSchema !== "object" || Array.isArray(inputSchema)) {
     throw new PlanhatDiscoverySchemaTransportError("parse", "malformed");
   }
-  const schema = inputSchema as Record<string, unknown>;
-  const properties = schema.properties;
-  if (!properties || typeof properties !== "object" || Array.isArray(properties)) {
-    throw new PlanhatDiscoverySchemaTransportError("parse", "malformed");
-  }
-  const required = new Set(
-    Array.isArray(schema.required) && schema.required.every((item) => typeof item === "string")
-      ? (schema.required as string[])
-      : []
+  const inputFields = projectInputFields(
+    inputSchema as Record<string, unknown>,
+    REVIEWED_INPUT_SCHEMA_KEYS[operation]
   );
-  const entries = Object.entries(properties);
   if (
-    entries.length > MAX_SCHEMA_FIELDS ||
-    entries.some(([name]) => !SAFE_SCHEMA_NAME.test(name))
+    inputFields.length > MAX_SCHEMA_FIELDS ||
+    inputFields.some((field) => field.path.length > MAX_FIELD_PATH_LENGTH)
   ) {
     throw new PlanhatDiscoverySchemaTransportError("parse", "malformed");
   }
   return {
     operation,
     tool: target,
-    inputFields: entries.map(([name, definition]) => ({
-      path: `$.${name}`,
-      type: schemaType(
-        definition && typeof definition === "object" && !Array.isArray(definition)
-          ? (definition as Record<string, unknown>).type
-          : undefined
-      ),
-      required: required.has(name),
-    })),
+    inputFields,
   };
 }
 

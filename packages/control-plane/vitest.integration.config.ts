@@ -205,10 +205,21 @@ export default defineConfig({
                         description: "private provider description",
                         inputSchema: {
                           type: "object",
-                          required: ["MODEL", "QUERY"],
+                          required: ["MODEL", "QUERY", "Acme_Corporation"],
                           properties: {
                             MODEL: { type: "string" },
-                            QUERY: { type: "string", examples: ["private provider example"] },
+                            QUERY: {
+                              type: "string",
+                              examples: ["private provider example"],
+                              required: ["brent.pearson@example.test"],
+                              properties: {
+                                "brent.pearson@example.test": { type: "string" },
+                                "123_Main_Street_Sydney": { type: "string" },
+                              },
+                            },
+                            Acme_Corporation: { type: "string" },
+                            "507f1f77bcf86cd799439011": { type: "string" },
+                            BrentPearson: { type: "string" },
                           },
                         },
                       },
@@ -228,11 +239,21 @@ export default defineConfig({
                         name: "get_model_record",
                         inputSchema: {
                           type: "object",
-                          required: ["MODEL", "OBJECT_ID"],
+                          required: ["MODEL", "OBJECT_ID", "507f1f77bcf86cd799439011"],
                           properties: {
                             MODEL: { type: "string" },
                             OBJECT_ID: { type: "string" },
-                            SELECT: { type: "array" },
+                            SELECT: {
+                              type: "array",
+                              required: ["123_Main_Street_Sydney"],
+                              properties: {
+                                "123_Main_Street_Sydney": { type: "string" },
+                                "brent.pearson@example.test": { type: "string" },
+                              },
+                            },
+                            Acme_Corporation: { type: "string" },
+                            "507f1f77bcf86cd799439011": { type: "string" },
+                            BrentPearson: { type: "string" },
                           },
                         },
                       },

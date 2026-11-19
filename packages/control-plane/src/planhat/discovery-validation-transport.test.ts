@@ -395,6 +395,112 @@ describe("Planhat discovery schema validation transport", () => {
     expect(schemaCall).toEqual({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
   });
 
+  it("collapses unknown top-level and nested input keys without leaking their values or order", async () => {
+    const sensitiveKeys = [
+      "Acme_Corporation",
+      "507f1f77bcf86cd799439011",
+      "brent.pearson@example.test",
+      "123_Main_Street_Sydney",
+      "BrentPearson",
+    ];
+    const response = Response.json({
+      jsonrpc: "2.0",
+      id: 2,
+      result: {
+        tools: [
+          {
+            name: "search_records",
+            inputSchema: {
+              type: "object",
+              required: ["MODEL", "QUERY", sensitiveKeys[0], sensitiveKeys[1]],
+              properties: {
+                [sensitiveKeys[4]!]: { type: "boolean" },
+                MODEL: { type: "string" },
+                [sensitiveKeys[0]!]: { type: "string" },
+                QUERY: {
+                  type: "string",
+                  required: [sensitiveKeys[2]],
+                  properties: {
+                    [sensitiveKeys[3]!]: { type: "number" },
+                    [sensitiveKeys[2]!]: { type: "string" },
+                  },
+                },
+                [sensitiveKeys[1]!]: { type: "array" },
+                LIMIT: { type: "number" },
+              },
+            },
+          },
+        ],
+      },
+    });
+    const transport = vi
+      .fn()
+      .mockResolvedValueOnce(initialize())
+      .mockResolvedValueOnce(new Response(null, { status: 202 }))
+      .mockResolvedValueOnce(response)
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    const observation = await inspectPlanhatDiscoverySchema(
+      "invented-access-token",
+      "planhat.mcp.validate-conversation-search",
+      transport
+    );
+
+    expect(observation.inputFields).toEqual([
+      { path: "$.MODEL", type: "string", required: true },
+      { path: "$.QUERY", type: "string", required: true },
+      { path: "$.QUERY.__dynamic__", type: "object", required: true },
+      { path: "$.LIMIT", type: "number", required: false },
+      { path: "$.__dynamic__", type: "object", required: true },
+    ]);
+    const encoded = JSON.stringify(observation);
+    expect(encoded.match(/__dynamic__/g)).toHaveLength(2);
+    for (const key of sensitiveKeys) {
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key));
+      const hex = [...new Uint8Array(digest)]
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join("");
+      expect(encoded).not.toContain(key);
+      expect(encoded).not.toContain(encodeURIComponent(key));
+      expect(encoded).not.toContain(btoa(key));
+      expect(encoded).not.toContain(hex);
+    }
+    expect(encoded).not.toMatch(/Acme|Brent|507f1f77|example\.test|Main_Street|Sydney/);
+  });
+
+  it("rejects required names that do not describe a property instead of misreporting status", async () => {
+    const response = Response.json({
+      jsonrpc: "2.0",
+      id: 2,
+      result: {
+        tools: [
+          {
+            name: "search_records",
+            inputSchema: {
+              type: "object",
+              required: ["MODEL", "Acme_Corporation"],
+              properties: { MODEL: { type: "string" }, QUERY: { type: "string" } },
+            },
+          },
+        ],
+      },
+    });
+    const transport = vi
+      .fn()
+      .mockResolvedValueOnce(initialize())
+      .mockResolvedValueOnce(new Response(null, { status: 202 }))
+      .mockResolvedValueOnce(response)
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await expect(
+      inspectPlanhatDiscoverySchema(
+        "invented-access-token",
+        "planhat.mcp.validate-conversation-search",
+        transport
+      )
+    ).rejects.toMatchObject({ stage: "parse", outcome: "malformed" });
+  });
+
   it.each(Object.keys(PLANHAT_DISCOVERY_SCHEMA_OPERATIONS))(
     "keeps %s on the fixed schema-inspection sequence",
     async (operation) => {

@@ -489,7 +489,7 @@ describe("Planhat Conversation discovery validation gateway", () => {
     expect(body.operation).toBe(operation);
     const encoded = JSON.stringify(body);
     expect(encoded).not.toMatch(
-      /private invented|example\.test|conversation-validation-invented|company-validation-invented|validation query|provider description|provider example|integration-planhat/
+      /private invented|example\.test|conversation-validation-invented|company-validation-invented|validation query|provider description|provider example|integration-planhat|Acme|Brent|507f1f77|Main_Street|Sydney/
     );
     expect(body.observation).toMatchObject({
       schema: { inputFields: expect.any(Array), outputFields: expect.any(Array) },
@@ -502,6 +502,41 @@ describe("Planhat Conversation discovery validation gateway", () => {
         identityShapes: expect.any(Array),
       },
     });
+    const inputFields = (
+      body.observation as { schema: { inputFields: Array<Record<string, unknown>> } }
+    ).schema.inputFields;
+    expect(inputFields).toEqual(
+      operation === "planhat.mcp.validate-conversation-search"
+        ? [
+            { path: "$.MODEL", type: "string", required: true },
+            { path: "$.QUERY", type: "string", required: true },
+            { path: "$.QUERY.__dynamic__", type: "object", required: true },
+            { path: "$.__dynamic__", type: "object", required: true },
+          ]
+        : [
+            { path: "$.MODEL", type: "string", required: true },
+            { path: "$.OBJECT_ID", type: "string", required: true },
+            { path: "$.SELECT", type: "array", required: false },
+            { path: "$.SELECT.__dynamic__", type: "object", required: true },
+            { path: "$.__dynamic__", type: "object", required: true },
+          ]
+    );
+    for (const key of [
+      "Acme_Corporation",
+      "507f1f77bcf86cd799439011",
+      "brent.pearson@example.test",
+      "123_Main_Street_Sydney",
+      "BrentPearson",
+    ]) {
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key));
+      const hex = [...new Uint8Array(digest)]
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join("");
+      expect(encoded).not.toContain(key);
+      expect(encoded).not.toContain(encodeURIComponent(key));
+      expect(encoded).not.toContain(btoa(key));
+      expect(encoded).not.toContain(hex);
+    }
   });
 
   it("rejects the compact 100,001-record provider payload through the real route seam", async () => {
