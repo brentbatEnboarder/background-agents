@@ -223,6 +223,18 @@ export default defineConfig({
                           },
                         },
                       },
+                      {
+                        name: "get_model_record",
+                        inputSchema: {
+                          type: "object",
+                          required: ["MODEL", "OBJECT_ID"],
+                          properties: {
+                            MODEL: { type: "string" },
+                            OBJECT_ID: { type: "string" },
+                            SELECT: { type: "array" },
+                          },
+                        },
+                      },
                     ],
                   },
                 });
@@ -244,6 +256,23 @@ export default defineConfig({
                       ],
                       limit: 20,
                       truncated: false,
+                    },
+                  },
+                });
+              }
+              if (
+                toolName === "get_model_record" &&
+                body.params?.arguments?.OBJECT_ID === "conversation-validation-invented"
+              ) {
+                return Response.json({
+                  jsonrpc: "2.0",
+                  id: body.id,
+                  result: {
+                    structuredContent: {
+                      _id: "conversation-validation-invented",
+                      companyId: "company-validation-invented",
+                      body: "private invented communication",
+                      address: "invented@example.test",
                     },
                   },
                 });
@@ -318,6 +347,8 @@ export default defineConfig({
             ).toISOString(),
             PLANHAT_DISCOVERY_VALIDATION_SEARCH_QUERY: "invented validation query",
             PLANHAT_DISCOVERY_VALIDATION_LIST_COMPANY_ID: "company-validation-invented",
+            PLANHAT_DISCOVERY_VALIDATION_GET_COMPANY_ID: "company-validation-invented",
+            PLANHAT_DISCOVERY_VALIDATION_GET_CONVERSATION_ID: "conversation-validation-invented",
             TEST_MIGRATIONS: migrations,
           },
         },

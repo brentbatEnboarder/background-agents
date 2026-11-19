@@ -24,6 +24,19 @@ export interface AuthorizedPlanhatGateway {
 
 type Failure = (stage: string, status: number, message?: string) => Response;
 
+/** Preserve the exact route's fail-closed sandbox check before reading its body. */
+export function authorizePlanhatSandbox(
+  request: Request,
+  ctx: SandboxRouteContext,
+  failure: Failure
+): Response | null {
+  const sandboxId = ctx.principal.sandboxId ?? null;
+  const headerSandboxId = request.headers.get("X-Sandbox-ID");
+  return !sandboxId || (headerSandboxId && headerSandboxId !== sandboxId)
+    ? failure("sandbox", 403, "Wrong sandbox")
+    : null;
+}
+
 /** Shared exact assignment and OAuth-broker boundary for every fixed Planhat route. */
 export async function authorizePlanhatGateway(
   request: Request,
@@ -33,11 +46,8 @@ export async function authorizePlanhatGateway(
   logger: Logger,
   failure: Failure
 ): Promise<AuthorizedPlanhatGateway | Response> {
-  const sandboxId = ctx.principal.sandboxId ?? null;
-  const headerSandboxId = request.headers.get("X-Sandbox-ID");
-  if (!sandboxId || (headerSandboxId && headerSandboxId !== sandboxId)) {
-    return failure("sandbox", 403, "Wrong sandbox");
-  }
+  const sandboxFailure = authorizePlanhatSandbox(request, ctx, failure);
+  if (sandboxFailure) return sandboxFailure;
 
   const connectionStore = new PlanhatOAuthConnectionStore(ctx.db, requireTokenEncryptionKey(env));
   let session;

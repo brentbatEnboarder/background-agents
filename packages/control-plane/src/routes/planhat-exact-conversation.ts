@@ -11,7 +11,7 @@ import {
 import { admit, dispatch } from "../routing/admit";
 import type { ControlPlaneHonoEnv } from "../routing/hono-env";
 import type { Env } from "../types";
-import { authorizePlanhatGateway } from "./planhat-gateway-authorization";
+import { authorizePlanhatGateway, authorizePlanhatSandbox } from "./planhat-gateway-authorization";
 import {
   error,
   json,
@@ -66,6 +66,10 @@ async function handleExactConversation(
 ): Promise<Response> {
   const startedAt = Date.now();
   const correlationId = generateId(16);
+  const sandboxFailure = authorizePlanhatSandbox(request, ctx, (stage, status, message) =>
+    failure(correlationId, stage, status, message)
+  );
+  if (sandboxFailure) return sandboxFailure;
   const parsed = await readRequest(request);
   if (parsed instanceof Response) return parsed;
   const authorized = await authorizePlanhatGateway(

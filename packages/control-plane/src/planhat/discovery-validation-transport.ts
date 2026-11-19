@@ -1,6 +1,7 @@
 import {
   PLANHAT_MCP_CLEANUP_TIMEOUT_MS,
   PLANHAT_MCP_PROTOCOL_VERSION,
+  PLANHAT_MCP_SELECT,
   PLANHAT_MCP_URL,
 } from "./exact-conversation-transport";
 
@@ -16,9 +17,11 @@ const REQUEST_TIMEOUT_MS = 30_000;
 const RESPONSE_MAX_BYTES = 256 * 1024;
 const MAX_SCHEMA_FIELDS = 200;
 const MAX_IDENTITY_SHAPES = 20;
+const MAX_FIELD_PATH_LENGTH = 240;
+const MAX_FIELD_DEPTH = 20;
 const SAFE_SCHEMA_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,127}$/;
 
-type FailureStage = "initialize" | "acknowledge" | "schema" | "parse";
+type FailureStage = "initialize" | "acknowledge" | "schema" | "parse" | "identity";
 type FailureOutcome = "provider" | "timeout" | "oversized" | "malformed" | "unsupported";
 
 export class PlanhatDiscoverySchemaTransportError extends Error {
@@ -37,14 +40,13 @@ export interface PlanhatDiscoverySchemaObservation {
   inputFields: Array<{ path: string; type: string; required: boolean }>;
 }
 
-export type PlanhatDiscoveryValidationOperation = Exclude<
-  PlanhatDiscoverySchemaOperation,
-  "planhat.mcp.validate-conversation-get"
->;
+export type PlanhatDiscoveryValidationOperation = PlanhatDiscoverySchemaOperation;
 
 export interface PlanhatDiscoveryValidationProbe {
   searchQuery?: string;
   listCompanyId?: string;
+  getCompanyId?: string;
+  getConversationId?: string;
 }
 
 export interface PlanhatDiscoveryValidationObservation {
@@ -279,10 +281,13 @@ function structuralFields(records: unknown[]): Array<{
 }> {
   const fields = new Map<string, { types: Set<string>; presenceCount: number }>();
   const visit = (value: unknown, path: string, seen: Set<string>, depth: number): void => {
-    if (depth > 20 || fields.size > MAX_SCHEMA_FIELDS) {
+    if (depth > MAX_FIELD_DEPTH || path.length > MAX_FIELD_PATH_LENGTH) {
       throw new PlanhatDiscoverySchemaTransportError("parse", "malformed");
     }
     if (path) {
+      if (!fields.has(path) && fields.size >= MAX_SCHEMA_FIELDS) {
+        throw new PlanhatDiscoverySchemaTransportError("parse", "malformed");
+      }
       const entry = fields.get(path) ?? { types: new Set<string>(), presenceCount: 0 };
       entry.types.add(valueType(value));
       if (!seen.has(path)) {
@@ -386,12 +391,40 @@ function probeArguments(
     if (!probe.searchQuery) throw new PlanhatDiscoverySchemaTransportError("schema", "unsupported");
     return { MODEL: "Conversation", QUERY: probe.searchQuery };
   }
-  if (!probe.listCompanyId) throw new PlanhatDiscoverySchemaTransportError("schema", "unsupported");
+  if (operation === "planhat.mcp.validate-conversation-list") {
+    if (!probe.listCompanyId)
+      throw new PlanhatDiscoverySchemaTransportError("schema", "unsupported");
+    return {
+      MODEL: "Conversation",
+      FILTERS: { companyId: probe.listCompanyId },
+      LIMIT: 20,
+    };
+  }
+  if (!probe.getCompanyId || !probe.getConversationId) {
+    throw new PlanhatDiscoverySchemaTransportError("schema", "unsupported");
+  }
   return {
     MODEL: "Conversation",
-    FILTERS: { companyId: probe.listCompanyId },
-    LIMIT: 20,
+    OBJECT_ID: probe.getConversationId,
+    SELECT: PLANHAT_MCP_SELECT,
   };
+}
+
+function validateGetIdentity(records: unknown[], probe: PlanhatDiscoveryValidationProbe): void {
+  if (records.length !== 1 || !probe.getCompanyId || !probe.getConversationId) {
+    throw new PlanhatDiscoverySchemaTransportError("identity", "malformed");
+  }
+  const record = records[0];
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    throw new PlanhatDiscoverySchemaTransportError("identity", "malformed");
+  }
+  const source = record as Record<string, unknown>;
+  if (
+    source.companyId !== probe.getCompanyId ||
+    (source.conversationId ?? source._id) !== probe.getConversationId
+  ) {
+    throw new PlanhatDiscoverySchemaTransportError("identity", "malformed");
+  }
 }
 
 /**
@@ -490,7 +523,7 @@ export async function inspectPlanhatDiscoverySchema(
   }
 }
 
-/** Runs one fixed, operator-configured search or list probe and discards all provider values. */
+/** Runs one fixed, operator-configured discovery probe and discards all provider values. */
 export async function observePlanhatDiscovery(
   accessToken: string,
   operation: PlanhatDiscoveryValidationOperation,
@@ -593,6 +626,9 @@ export async function observePlanhatDiscovery(
     const encoded = await readBounded(called, "schema");
     const payload = parseToolResult(parseJsonRpc(called, encoded, 3, "parse").result);
     const records = candidateRecords(payload);
+    if (operation === "planhat.mcp.validate-conversation-get") {
+      validateGetIdentity(records, probe);
+    }
     const metadata = findMetadata(payload);
     return {
       observedAt: new Date(now()).toISOString(),

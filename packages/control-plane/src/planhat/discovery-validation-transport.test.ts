@@ -38,7 +38,15 @@ function toolsList(): Response {
         },
         {
           name: "get_model_record",
-          inputSchema: { type: "object", properties: { OBJECT_ID: { type: "string" } } },
+          inputSchema: {
+            type: "object",
+            required: ["MODEL", "OBJECT_ID"],
+            properties: {
+              MODEL: { type: "string" },
+              OBJECT_ID: { type: "string" },
+              SELECT: { type: "array" },
+            },
+          },
         },
         { name: "update_model_record", inputSchema: { type: "object", properties: {} } },
       ],
@@ -147,6 +155,112 @@ describe("Planhat discovery schema validation transport", () => {
       },
     });
     expect(JSON.stringify(probeCall)).not.toMatch(/SELECT|update|delete|mutation/i);
+  });
+
+  it("validates fixed exact-get schema and identity without caller-selected arguments", async () => {
+    const calls: Request[] = [];
+    const transport = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      calls.push(request.clone());
+      if (request.method === "DELETE") return new Response(null, { status: 204 });
+      const body = JSON.parse(await request.text()) as Record<string, unknown>;
+      if (body.method === "initialize") return initialize();
+      if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+      if (body.method === "tools/list") return toolsList();
+      return Response.json({
+        jsonrpc: "2.0",
+        id: 3,
+        result: {
+          structuredContent: {
+            _id: "conversation-invented",
+            companyId: "company-invented",
+            body: "private body",
+          },
+        },
+      });
+    });
+
+    const observation = await observePlanhatDiscovery(
+      "invented-access-token",
+      "planhat.mcp.validate-conversation-get",
+      { getCompanyId: "company-invented", getConversationId: "conversation-invented" },
+      transport
+    );
+    const probeCall = JSON.parse(await calls[3].text());
+    expect(probeCall.params).toEqual({
+      name: "get_model_record",
+      arguments: {
+        MODEL: "Conversation",
+        OBJECT_ID: "conversation-invented",
+        SELECT: ["_id", "companyId", "numberOfParts", "parts"],
+      },
+    });
+    expect(observation.response).toMatchObject({ recordCount: 1 });
+    expect(JSON.stringify(observation)).not.toMatch(
+      /private body|company-invented|conversation-invented/
+    );
+  });
+
+  it("fails closed when fixed exact-get returns a different identity", async () => {
+    const transport = vi
+      .fn()
+      .mockResolvedValueOnce(initialize())
+      .mockResolvedValueOnce(new Response(null, { status: 202 }))
+      .mockResolvedValueOnce(toolsList())
+      .mockResolvedValueOnce(
+        Response.json({
+          jsonrpc: "2.0",
+          id: 3,
+          result: {
+            structuredContent: { _id: "conversation-other", companyId: "company-invented" },
+          },
+        })
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await expect(
+      observePlanhatDiscovery(
+        "invented-access-token",
+        "planhat.mcp.validate-conversation-get",
+        { getCompanyId: "company-invented", getConversationId: "conversation-invented" },
+        transport
+      )
+    ).rejects.toMatchObject({ stage: "identity", outcome: "malformed" });
+  });
+
+  it("rejects a 15,979-byte payload with the demonstrated 2,561-character path", async () => {
+    const segment = "a".repeat(127);
+    let record: Record<string, unknown> = { value: true };
+    for (let depth = 0; depth < 20; depth += 1) record = { [segment]: record };
+    expect(`$${`.${segment}`.repeat(20)}`).toHaveLength(2_561);
+
+    const makeBody = (padding: string) =>
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 3,
+        result: { structuredContent: { records: [record], padding } },
+      });
+    const empty = makeBody("");
+    const encoded = makeBody("p".repeat(15_979 - new TextEncoder().encode(empty).byteLength));
+    expect(new TextEncoder().encode(encoded)).toHaveLength(15_979);
+
+    const transport = vi
+      .fn()
+      .mockResolvedValueOnce(initialize())
+      .mockResolvedValueOnce(new Response(null, { status: 202 }))
+      .mockResolvedValueOnce(toolsList())
+      .mockResolvedValueOnce(
+        new Response(encoded, { headers: { "content-type": "application/json" } })
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await expect(
+      observePlanhatDiscovery(
+        "invented-access-token",
+        "planhat.mcp.validate-conversation-search",
+        { searchQuery: "invented query" },
+        transport
+      )
+    ).rejects.toMatchObject({ stage: "parse", outcome: "malformed" });
   });
 
   it("inspects only one allowlisted tool and emits structural input metadata", async () => {

@@ -101,6 +101,8 @@ export interface EnvConfig {
   PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT?: string;
   PLANHAT_DISCOVERY_VALIDATION_SEARCH_QUERY?: string;
   PLANHAT_DISCOVERY_VALIDATION_LIST_COMPANY_ID?: string;
+  PLANHAT_DISCOVERY_VALIDATION_GET_COMPANY_ID?: string;
+  PLANHAT_DISCOVERY_VALIDATION_GET_CONVERSATION_ID?: string;
 
   // Logging
   LOG_LEVEL?: string; // "debug" | "info" | "warn" | "error" (default: "info")

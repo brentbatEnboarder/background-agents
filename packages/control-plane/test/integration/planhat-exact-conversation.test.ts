@@ -233,6 +233,15 @@ describe("Planhat exact Conversation gateway", () => {
     expect(JSON.stringify(body)).not.toMatch(/integration-planhat-(access|refresh|secret)/);
   });
 
+  it("keeps the sandbox authorization gate ahead of exact-route request parsing", async () => {
+    const response = await gatewayFetch("must-not-read", {
+      sandboxId: "wrong-sandbox",
+      body: { unrestricted: "must-not-parse" },
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ stage: "sandbox" });
+  });
+
   it("admits actor-bound Alex Slack sessions for initial and follow-up exact reads", async () => {
     await enableSlackEnvironmentAssignment();
     await seedSession({
@@ -464,6 +473,7 @@ describe("Planhat Conversation discovery validation gateway", () => {
   it.each([
     "planhat.mcp.validate-conversation-search",
     "planhat.mcp.validate-conversation-list",
+    "planhat.mcp.validate-conversation-get",
   ] as const)("returns the exact text-free #245 envelope for %s", async (operation) => {
     const response = await discoveryValidationFetch(operation);
     expect(response.status).toBe(200);
@@ -480,8 +490,8 @@ describe("Planhat Conversation discovery validation gateway", () => {
       response: {
         byteLength: expect.any(Number),
         recordCount: 1,
-        candidateLimit: 20,
-        truncated: false,
+        candidateLimit: operation === "planhat.mcp.validate-conversation-get" ? null : 20,
+        truncated: operation === "planhat.mcp.validate-conversation-get" ? null : false,
         continuationPresent: null,
         identityShapes: expect.any(Array),
       },

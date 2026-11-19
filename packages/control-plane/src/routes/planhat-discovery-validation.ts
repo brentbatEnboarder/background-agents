@@ -12,7 +12,7 @@ import {
 import { admit, dispatch } from "../routing/admit";
 import type { ControlPlaneHonoEnv } from "../routing/hono-env";
 import type { Env } from "../types";
-import { authorizePlanhatGateway } from "./planhat-gateway-authorization";
+import { authorizePlanhatGateway, authorizePlanhatSandbox } from "./planhat-gateway-authorization";
 import {
   error,
   json,
@@ -23,6 +23,7 @@ import {
 
 const logger = createLogger("router:planhat-discovery-validation");
 const REQUEST_MAX_BYTES = 256;
+const RESPONSE_MAX_BYTES = 256 * 1024;
 const MAX_AUTHORIZATION_WINDOW_MS = 24 * 60 * 60 * 1000;
 const SAFE_PLANHAT_ID = /^[A-Za-z0-9][A-Za-z0-9-]{0,199}$/;
 
@@ -31,6 +32,7 @@ const requestSchema = z
     operation: z.enum([
       "planhat.mcp.validate-conversation-search",
       "planhat.mcp.validate-conversation-list",
+      "planhat.mcp.validate-conversation-get",
     ]),
   })
   .strict();
@@ -49,6 +51,8 @@ export function readPlanhatDiscoveryValidationConfiguration(
     | "PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT"
     | "PLANHAT_DISCOVERY_VALIDATION_SEARCH_QUERY"
     | "PLANHAT_DISCOVERY_VALIDATION_LIST_COMPANY_ID"
+    | "PLANHAT_DISCOVERY_VALIDATION_GET_COMPANY_ID"
+    | "PLANHAT_DISCOVERY_VALIDATION_GET_CONVERSATION_ID"
   >,
   operation: PlanhatDiscoveryValidationOperation,
   now = Date.now()
@@ -67,9 +71,22 @@ export function readPlanhatDiscoveryValidationConfiguration(
     if (!searchQuery || searchQuery.length > 500) return null;
     return { operation, expiresAt, probe: { searchQuery } };
   }
-  const listCompanyId = env.PLANHAT_DISCOVERY_VALIDATION_LIST_COMPANY_ID;
-  if (!listCompanyId || !SAFE_PLANHAT_ID.test(listCompanyId)) return null;
-  return { operation, expiresAt, probe: { listCompanyId } };
+  if (operation === "planhat.mcp.validate-conversation-list") {
+    const listCompanyId = env.PLANHAT_DISCOVERY_VALIDATION_LIST_COMPANY_ID;
+    if (!listCompanyId || !SAFE_PLANHAT_ID.test(listCompanyId)) return null;
+    return { operation, expiresAt, probe: { listCompanyId } };
+  }
+  const getCompanyId = env.PLANHAT_DISCOVERY_VALIDATION_GET_COMPANY_ID;
+  const getConversationId = env.PLANHAT_DISCOVERY_VALIDATION_GET_CONVERSATION_ID;
+  if (
+    !getCompanyId ||
+    !SAFE_PLANHAT_ID.test(getCompanyId) ||
+    !getConversationId ||
+    !SAFE_PLANHAT_ID.test(getConversationId)
+  ) {
+    return null;
+  }
+  return { operation, expiresAt, probe: { getCompanyId, getConversationId } };
 }
 
 async function readRequest(request: Request): Promise<z.infer<typeof requestSchema> | Response> {
@@ -100,20 +117,43 @@ function failure(correlationId: string, stage: string, status: number): Response
   );
 }
 
-async function handleDiscoveryValidation(
+interface DiscoveryValidationDependencies {
+  authorizeSandbox: typeof authorizePlanhatSandbox;
+  authorizeGateway: typeof authorizePlanhatGateway;
+  observe: typeof observePlanhatDiscovery;
+  now: () => number;
+}
+
+const DEFAULT_DEPENDENCIES: DiscoveryValidationDependencies = {
+  authorizeSandbox: authorizePlanhatSandbox,
+  authorizeGateway: authorizePlanhatGateway,
+  observe: observePlanhatDiscovery,
+  now: Date.now,
+};
+
+export async function handleDiscoveryValidation(
   request: Request,
   env: Env,
   params: { id: string },
-  ctx: SandboxRouteContext
+  ctx: SandboxRouteContext,
+  dependencies: DiscoveryValidationDependencies = DEFAULT_DEPENDENCIES
 ): Promise<Response> {
-  const startedAt = Date.now();
+  const startedAt = dependencies.now();
   const correlationId = generateId(16);
+  const sandboxFailure = dependencies.authorizeSandbox(request, ctx, (stage, status) =>
+    failure(correlationId, stage, status)
+  );
+  if (sandboxFailure) return sandboxFailure;
   const parsed = await readRequest(request);
   if (parsed instanceof Response) return parsed;
-  const configuration = readPlanhatDiscoveryValidationConfiguration(env, parsed.operation);
+  const configuration = readPlanhatDiscoveryValidationConfiguration(
+    env,
+    parsed.operation,
+    dependencies.now()
+  );
   if (!configuration) return failure(correlationId, "authorization", 403);
 
-  const authorized = await authorizePlanhatGateway(
+  const authorized = await dependencies.authorizeGateway(
     request,
     env,
     params.id,
@@ -122,16 +162,20 @@ async function handleDiscoveryValidation(
     (stage, status) => failure(correlationId, stage, status)
   );
   if (authorized instanceof Response) return authorized;
-  if (Date.now() >= configuration.expiresAt) {
+  if (dependencies.now() >= configuration.expiresAt) {
     return failure(correlationId, "authorization", 403);
   }
 
   try {
-    const observation = await observePlanhatDiscovery(
+    const observation = await dependencies.observe(
       authorized.accessToken,
       configuration.operation,
       configuration.probe
     );
+    const envelope = { operation: configuration.operation, correlationId, observation };
+    if (new TextEncoder().encode(JSON.stringify(envelope)).byteLength > RESPONSE_MAX_BYTES) {
+      throw new PlanhatDiscoverySchemaTransportError("parse", "oversized");
+    }
     logger.info("Planhat Conversation discovery validation observed", {
       event: "planhat_gateway.discovery_validation_observed",
       correlation_id: correlationId,
@@ -143,11 +187,11 @@ async function handleDiscoveryValidation(
       outcome: "success",
       response_bytes: observation.response.byteLength,
       record_count: observation.response.recordCount,
-      duration_ms: Date.now() - startedAt,
+      duration_ms: dependencies.now() - startedAt,
       request_id: ctx.request_id,
       trace_id: ctx.trace_id,
     });
-    return json({ operation: configuration.operation, correlationId, observation });
+    return json(envelope);
   } catch (cause) {
     const transport =
       cause instanceof PlanhatDiscoverySchemaTransportError
@@ -164,7 +208,7 @@ async function handleDiscoveryValidation(
       stage: transport.stage,
       outcome: transport.outcome,
       provider_status_class: transport.statusClass,
-      duration_ms: Date.now() - startedAt,
+      duration_ms: dependencies.now() - startedAt,
       request_id: ctx.request_id,
       trace_id: ctx.trace_id,
     });
