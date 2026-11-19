@@ -15,6 +15,7 @@ export type PlanhatDiscoverySchemaOperation = keyof typeof PLANHAT_DISCOVERY_SCH
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const RESPONSE_MAX_BYTES = 256 * 1024;
+export const PLANHAT_DISCOVERY_MAX_RECORD_COUNT = 100_000;
 const MAX_SCHEMA_FIELDS = 200;
 const MAX_IDENTITY_SHAPES = 20;
 const MAX_FIELD_PATH_LENGTH = 240;
@@ -626,6 +627,9 @@ export async function observePlanhatDiscovery(
     const encoded = await readBounded(called, "schema");
     const payload = parseToolResult(parseJsonRpc(called, encoded, 3, "parse").result);
     const records = candidateRecords(payload);
+    if (records.length > PLANHAT_DISCOVERY_MAX_RECORD_COUNT) {
+      throw new PlanhatDiscoverySchemaTransportError("parse", "malformed");
+    }
     if (operation === "planhat.mcp.validate-conversation-get") {
       validateGetIdentity(records, probe);
     }

@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { PlanhatDiscoverySchemaTransportError } from "../planhat/discovery-validation-transport";
+import {
+  PLANHAT_DISCOVERY_MAX_RECORD_COUNT,
+  PlanhatDiscoverySchemaTransportError,
+} from "../planhat/discovery-validation-transport";
 import type { Env } from "../types";
 import type { SandboxRouteContext } from "./shared";
 import {
@@ -198,6 +201,32 @@ describe("Planhat discovery validation route failures", () => {
     const remaining = 286_802 - new TextEncoder().encode(JSON.stringify(projected)).byteLength;
     outputFields[0]!.path += "a".repeat(remaining);
     expect(new TextEncoder().encode(JSON.stringify(projected))).toHaveLength(286_802);
+
+    const response = await handleDiscoveryValidation(
+      routeRequest(),
+      ROUTE_ENVIRONMENT,
+      { id: "session-invented" },
+      ROUTE_CONTEXT,
+      routeDependencies(vi.fn(async () => observation)) as never
+    );
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({ stage: "parse" });
+  });
+
+  it("rejects an incompatible record count before route success emission", async () => {
+    const observation = {
+      observedAt: "2026-11-19T10:00:01.000Z",
+      durationMs: 42,
+      schema: { inputFields: [], outputFields: [] },
+      response: {
+        byteLength: 200_080,
+        recordCount: PLANHAT_DISCOVERY_MAX_RECORD_COUNT + 1,
+        candidateLimit: null,
+        truncated: null,
+        continuationPresent: null,
+        identityShapes: [],
+      },
+    };
 
     const response = await handleDiscoveryValidation(
       routeRequest(),

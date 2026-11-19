@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   inspectPlanhatDiscoverySchema,
   observePlanhatDiscovery,
+  PLANHAT_DISCOVERY_MAX_RECORD_COUNT,
   PLANHAT_DISCOVERY_SCHEMA_OPERATIONS,
   PlanhatDiscoverySchemaTransportError,
 } from "./discovery-validation-transport";
@@ -261,6 +262,39 @@ describe("Planhat discovery schema validation transport", () => {
         transport
       )
     ).rejects.toMatchObject({ stage: "parse", outcome: "malformed" });
+  });
+
+  it("rejects the compact 100,001-record response before emitting an incompatible count", async () => {
+    const encoded = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 3,
+      result: {
+        structuredContent: {
+          records: Array.from({ length: PLANHAT_DISCOVERY_MAX_RECORD_COUNT + 1 }, () => 0),
+        },
+      },
+    });
+    expect(new TextEncoder().encode(encoded).byteLength).toBeLessThanOrEqual(256 * 1024);
+
+    const transport = vi
+      .fn()
+      .mockResolvedValueOnce(initialize())
+      .mockResolvedValueOnce(new Response(null, { status: 202 }))
+      .mockResolvedValueOnce(toolsList())
+      .mockResolvedValueOnce(
+        new Response(encoded, { headers: { "content-type": "application/json" } })
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await expect(
+      observePlanhatDiscovery(
+        "invented-access-token",
+        "planhat.mcp.validate-conversation-search",
+        { searchQuery: "invented query" },
+        transport
+      )
+    ).rejects.toMatchObject({ stage: "parse", outcome: "malformed" });
+    expect(transport).toHaveBeenCalledTimes(5);
   });
 
   it("inspects only one allowlisted tool and emits structural input metadata", async () => {

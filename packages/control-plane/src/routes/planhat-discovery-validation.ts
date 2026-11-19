@@ -5,6 +5,7 @@ import { generateId } from "../auth/crypto";
 import { createLogger } from "../logger";
 import {
   observePlanhatDiscovery,
+  PLANHAT_DISCOVERY_MAX_RECORD_COUNT,
   PlanhatDiscoverySchemaTransportError,
   type PlanhatDiscoveryValidationOperation,
   type PlanhatDiscoveryValidationProbe,
@@ -172,6 +173,13 @@ export async function handleDiscoveryValidation(
       configuration.operation,
       configuration.probe
     );
+    if (
+      !Number.isSafeInteger(observation.response.recordCount) ||
+      observation.response.recordCount < 0 ||
+      observation.response.recordCount > PLANHAT_DISCOVERY_MAX_RECORD_COUNT
+    ) {
+      throw new PlanhatDiscoverySchemaTransportError("parse", "malformed");
+    }
     const envelope = { operation: configuration.operation, correlationId, observation };
     if (new TextEncoder().encode(JSON.stringify(envelope)).byteLength > RESPONSE_MAX_BYTES) {
       throw new PlanhatDiscoverySchemaTransportError("parse", "oversized");
