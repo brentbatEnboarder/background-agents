@@ -40,6 +40,7 @@ export default defineConfig({
   plugins: [
     cloudflareTest(async () => {
       const migrations = await readD1Migrations(migrationsPath);
+      const validationIssuedAt = Date.now();
 
       return {
         wrangler: {
@@ -369,8 +370,9 @@ export default defineConfig({
             WORKER_URL: "https://control.test.local",
             APP_NAME: "Open-Inspect",
             PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
+            PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT: new Date(validationIssuedAt).toISOString(),
             PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: new Date(
-              Date.now() + 30 * 60 * 1000
+              validationIssuedAt + 30 * 60 * 1000
             ).toISOString(),
             PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID: "window-invented",
             PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID: "env-planhat-gateway",

@@ -954,7 +954,27 @@ describe("SandboxLifecycleManager", () => {
 
       await manager.spawnSandbox();
 
+      expect(storage.getUserEnvVars).toHaveBeenCalledWith(true);
       expect(provider.createSandbox).toHaveBeenCalledWith(expect.objectContaining({ userEnvVars }));
+    });
+
+    it("marks a failed-session respawn as ineligible for a fresh validation window", async () => {
+      const sandbox = createMockSandbox({ status: "failed", snapshot_image_id: null });
+      const storage = createMockStorage(createMockSession(), sandbox);
+      const manager = new SandboxLifecycleManager(
+        createMockProvider(),
+        storage,
+        storage,
+        createMockBroadcaster(),
+        createMockWebSocketManager(false),
+        createMockAlarmScheduler(),
+        createMockIdGenerator(),
+        createTestConfig()
+      );
+
+      await manager.spawnSandbox();
+
+      expect(storage.getUserEnvVars).toHaveBeenCalledWith(false);
     });
 
     it("spawns no-repository sessions without repo-only sandbox features", async () => {
@@ -1196,6 +1216,7 @@ describe("SandboxLifecycleManager", () => {
       await manager.spawnSandbox();
 
       expect(storage.getUserEnvVars).toHaveBeenCalledOnce();
+      expect(storage.getUserEnvVars).toHaveBeenCalledWith();
       expect(provider.restoreFromSnapshot).toHaveBeenCalledWith(
         expect.objectContaining({ userEnvVars })
       );

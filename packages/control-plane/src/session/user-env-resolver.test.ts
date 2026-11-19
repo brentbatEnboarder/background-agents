@@ -328,9 +328,10 @@ describe("UserEnvResolver", () => {
   });
 
   describe("operator-owned discovery validation window", () => {
-    const now = Date.parse("2026-11-19T10:00:00.000Z");
+    const now = Date.parse("2026-11-19T10:00:00.001Z");
     const validWindow = {
       PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
+      PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT: "2026-11-19T10:00:00.000Z",
       PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2026-11-19T10:30:00.000Z",
       PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID: "window-invented",
       PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID: "env-alex-invented",
@@ -338,16 +339,67 @@ describe("UserEnvResolver", () => {
 
     it("injects only the derived CS window into a fresh matching Alex sandbox", async () => {
       const h = makeHarness({
-        session: sessionRow({ environment_id: "env-alex-invented" }),
+        session: sessionRow({
+          environment_id: "env-alex-invented",
+          spawn_source: "slack-bot",
+          repo_owner: null,
+          repo_name: null,
+          repo_id: null,
+          created_at: Date.parse("2026-11-19T10:00:00.001Z"),
+        }),
         discoveryValidationEnv: validWindow,
         now: () => now,
       });
       h.db.providerAuthRows = providerAuthRows(API_KEY_MODES);
-      await expect(h.resolver.getUserEnvVars()).resolves.toEqual({
+      await expect(h.resolver.getUserEnvVars(true)).resolves.toEqual({
         CS_PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
+        CS_PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT: "2026-11-19T10:00:00.000Z",
         CS_PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2026-11-19T10:30:00.000Z",
         CS_PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID: "window-invented",
       });
+    });
+
+    it.each([
+      ["pre-existing", { created_at: Date.parse("2026-11-19T09:59:59.999Z") }],
+      ["boundary-equal", { created_at: Date.parse("2026-11-19T10:00:00.000Z") }],
+      ["clock-ahead", { created_at: now + 1 }],
+      ["missing timestamp", { created_at: null as unknown as number }],
+      ["invalid timestamp", { created_at: Number.NaN }],
+      ["child", { parent_session_id: "parent", spawn_depth: 1 }],
+      ["non-Slack", { spawn_source: "user" as const }],
+    ])("does not inject the window for %s session provenance", async (_name, overrides) => {
+      const h = makeHarness({
+        session: sessionRow({
+          environment_id: "env-alex-invented",
+          spawn_source: "slack-bot",
+          repo_owner: null,
+          repo_name: null,
+          repo_id: null,
+          created_at: Date.parse("2026-11-19T10:00:00.001Z"),
+          ...overrides,
+        }),
+        discoveryValidationEnv: validWindow,
+        now: () => now,
+      });
+      h.db.providerAuthRows = providerAuthRows(API_KEY_MODES);
+      await expect(h.resolver.getUserEnvVars(true)).resolves.toBeUndefined();
+    });
+
+    it("does not inject the window into restore/resume env resolution", async () => {
+      const h = makeHarness({
+        session: sessionRow({
+          environment_id: "env-alex-invented",
+          spawn_source: "slack-bot",
+          repo_owner: null,
+          repo_name: null,
+          repo_id: null,
+          created_at: Date.parse("2026-11-19T10:00:00.001Z"),
+        }),
+        discoveryValidationEnv: validWindow,
+        now: () => now,
+      });
+      h.db.providerAuthRows = providerAuthRows(API_KEY_MODES);
+      await expect(h.resolver.getUserEnvVars()).resolves.toBeUndefined();
     });
 
     it.each([

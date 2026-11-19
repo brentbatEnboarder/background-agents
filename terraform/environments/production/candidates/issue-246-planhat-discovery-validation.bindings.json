@@ -2,7 +2,7 @@
   "issue": 246,
   "purpose": "Reviewed disabled and expiring-window control-plane candidate envelopes",
   "baselineBindingCount": 39,
-  "expectedBindingCount": 47,
+  "expectedBindingCount": 48,
   "variants": ["disabled", "expiring-window"],
   "bindings": [
     { "name": "ALLOWED_EMAIL_DOMAINS", "type": "plain_text" },
@@ -45,6 +45,7 @@
     { "name": "WEB_APP_URL", "type": "plain_text" },
     { "name": "WORKER_URL", "type": "plain_text" },
     { "name": "PLANHAT_DISCOVERY_VALIDATION_ENABLED", "type": "secret_text" },
+    { "name": "PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT", "type": "secret_text" },
     { "name": "PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT", "type": "secret_text" },
     { "name": "PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID", "type": "secret_text" },
     {

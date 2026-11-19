@@ -83,10 +83,13 @@ async function seedSession(
     spawnDepth?: number;
     repoOwner?: string | null;
     repoName?: string | null;
+    createdAt?: number;
   } = {}
 ): Promise<void> {
   const sessionId = input.sessionId ?? activeSessionId;
-  const now = Date.now();
+  const now =
+    input.createdAt ??
+    Math.max(Date.now(), Date.parse(env.PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT ?? "") + 1);
   await new SessionIndexStore(sqlDatabase(env.DB)).create({
     id: sessionId,
     title: "Invented Alex session",
@@ -208,7 +211,14 @@ function discoveryValidationFetch(
         "X-Sandbox-ID": overrides.sandboxId ?? activeSandboxId,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(overrides.body ?? { operation, windowId: "window-invented" }),
+      body: JSON.stringify(
+        overrides.body ?? {
+          operation,
+          windowId: "window-invented",
+          issuedAt: env.PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT,
+          expiresAt: env.PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT,
+        }
+      ),
     }
   );
 }
@@ -586,7 +596,12 @@ describe("Planhat Conversation discovery validation gateway", () => {
       expect(
         (
           await discoveryValidationFetch("planhat.mcp.validate-conversation-search", {
-            body: { windowId: "window-invented", ...candidate },
+            body: {
+              windowId: "window-invented",
+              issuedAt: env.PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT,
+              expiresAt: env.PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT,
+              ...candidate,
+            },
           })
         ).status
       ).toBe(400);
@@ -627,6 +642,44 @@ describe("Planhat Conversation discovery validation gateway", () => {
     await store.setAssignment(ENVIRONMENT_ID, false, "automation", null, 2);
     expect(
       (await discoveryValidationFetch("planhat.mcp.validate-conversation-search")).status
+    ).toBe(403);
+  });
+
+  it("denies a pre-window Slack session and an exact-expiry mismatch before the provider seam", async () => {
+    const oldSessionId = "validation-pre-window-session";
+    const oldSandboxId = "sandbox-validation-pre-window";
+    const oldSandboxToken = "token-validation-pre-window";
+    await seedSession({
+      sessionId: oldSessionId,
+      spawnSource: "slack-bot",
+      userId: USER_ID,
+      sandboxId: oldSandboxId,
+      sandboxToken: oldSandboxToken,
+      createdAt: Date.parse(env.PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT!) - 1,
+    });
+    expect(
+      (
+        await discoveryValidationFetch("planhat.mcp.validate-conversation-search", {
+          sessionId: oldSessionId,
+          sandboxId: oldSandboxId,
+          sandboxToken: oldSandboxToken,
+        })
+      ).status
+    ).toBe(403);
+
+    expect(
+      (
+        await discoveryValidationFetch("planhat.mcp.validate-conversation-search", {
+          body: {
+            operation: "planhat.mcp.validate-conversation-search",
+            windowId: "window-invented",
+            issuedAt: env.PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT,
+            expiresAt: new Date(
+              Date.parse(env.PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT!) - 1
+            ).toISOString(),
+          },
+        })
+      ).status
     ).toBe(403);
   });
 

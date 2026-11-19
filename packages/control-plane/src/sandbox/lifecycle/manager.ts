@@ -113,7 +113,9 @@ export interface SessionContextReader {
    */
   getSessionRepositories(): SessionRepositoryInfo[];
   /** Get user env vars for sandbox injection */
-  getUserEnvVars(): Promise<Record<string, string> | undefined>;
+  getUserEnvVars(
+    includeFreshValidationWindow?: boolean
+  ): Promise<Record<string, string> | undefined>;
 }
 
 /**
@@ -506,7 +508,7 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
             snapshot_image_id: spawnState.snapshotImageId,
           });
         }
-        await this.doSpawn();
+        await this.doSpawn(spawnState.status === "pending");
         return;
     }
   }
@@ -545,7 +547,7 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
   /**
    * Execute a fresh sandbox spawn.
    */
-  private async doSpawn(): Promise<void> {
+  private async doSpawn(includeFreshValidationWindow: boolean): Promise<void> {
     this.isSpawningSandbox = true;
     this.providerStartupPending = true;
     const spawnStartedAt = Date.now();
@@ -571,7 +573,7 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
 
       await this.stopPriorProviderSandbox();
 
-      const userEnvVars = await this.sessionContext.getUserEnvVars();
+      const userEnvVars = await this.sessionContext.getUserEnvVars(includeFreshValidationWindow);
       const { provider, model: modelId } = this.resolveProviderAndModel(session);
       const repositories = this.sessionContext.getSessionRepositories();
       const multiRepoFields = multiRepoSpawnFields(repositories);
@@ -921,7 +923,7 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
     if (!this.provider.restoreFromSnapshot) {
       this.log.info("Provider does not support restore, falling back to fresh spawn");
       // Fall back to fresh spawn
-      await this.doSpawn();
+      await this.doSpawn(false);
       return;
     }
 
@@ -1066,7 +1068,7 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
    */
   private async resumeSandbox(providerObjectId: string): Promise<void> {
     if (!this.provider.resumeSandbox) {
-      await this.doSpawn();
+      await this.doSpawn(false);
       return;
     }
 
@@ -1111,7 +1113,7 @@ export class SandboxLifecycleManager implements SandboxLifecycle {
             provider_object_id: providerObjectId,
             error: result.error,
           });
-          await this.doSpawn();
+          await this.doSpawn(false);
           return;
         }
 

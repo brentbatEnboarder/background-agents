@@ -26,6 +26,10 @@ export interface AuthorizedPlanhatGateway {
 export interface PlanhatGatewayAdmission {
   /** Omitted for the exact Conversation route, which retains automation compatibility. */
   discoveryValidationEnvironmentId?: string;
+  discoveryValidationIssuedAt?: number;
+  discoveryValidationExpiresAt?: number;
+  discoveryValidationCurrentTime?: () => number;
+  validateBeforeBrokerage?: () => boolean;
 }
 
 type Failure = (stage: string, status: number, message?: string) => Response;
@@ -93,7 +97,14 @@ export async function authorizePlanhatGateway(
       session.parentSessionId === null &&
       session.spawnDepth === 0 &&
       session.repoOwner === null &&
-      session.repoName === null;
+      session.repoName === null &&
+      Number.isSafeInteger(session.createdAt) &&
+      admission.discoveryValidationIssuedAt !== undefined &&
+      admission.discoveryValidationExpiresAt !== undefined &&
+      admission.discoveryValidationCurrentTime !== undefined &&
+      session.createdAt > admission.discoveryValidationIssuedAt &&
+      session.createdAt <= admission.discoveryValidationCurrentTime() &&
+      session.createdAt < admission.discoveryValidationExpiresAt;
     if (!isApprovedSlackValidationSession) {
       return failure("assignment", 403, "Planhat gateway is not assigned");
     }
@@ -131,6 +142,10 @@ export async function authorizePlanhatGateway(
       return failure("assignment", 403, "Planhat gateway is not assigned");
     }
     expectedAssignment = { mode: "slack-environment", automationId: null };
+  }
+
+  if (admission.validateBeforeBrokerage && !admission.validateBeforeBrokerage()) {
+    return failure("authorization", 403, "Planhat validation window is unavailable");
   }
 
   try {

@@ -99,8 +99,10 @@ export class UserEnvResolver {
    * The user-defined environment for the sandbox, or undefined when the
    * session is missing or the assembled environment is empty.
    */
-  async getUserEnvVars(): Promise<Record<string, string> | undefined> {
-    const context = await this.loadUserEnvContext();
+  async getUserEnvVars(
+    includeFreshValidationWindow = false
+  ): Promise<Record<string, string> | undefined> {
+    const context = await this.loadUserEnvContext(includeFreshValidationWindow);
     if (!context) return undefined;
     return Object.keys(context.sandboxEnv).length === 0 ? undefined : context.sandboxEnv;
   }
@@ -110,7 +112,7 @@ export class UserEnvResolver {
    * authentication in the assembled environment, or null when authenticated.
    */
   async getProviderAuthenticationError(model: string): Promise<string | null> {
-    const context = await this.loadUserEnvContext();
+    const context = await this.loadUserEnvContext(false);
     if (!context) return null;
     const accountIssue = await this.checkBoundAccount(model, context);
     if (accountIssue) return accountIssue;
@@ -155,7 +157,9 @@ export class UserEnvResolver {
     return null;
   }
 
-  private async loadUserEnvContext(): Promise<UserEnvContext | null> {
+  private async loadUserEnvContext(
+    includeFreshValidationWindow: boolean
+  ): Promise<UserEnvContext | null> {
     const session = this.sessionCoreRepository.getSession();
     if (!session) {
       this.log.warn("Cannot load secrets: no session");
@@ -227,11 +231,21 @@ export class UserEnvResolver {
       providerAuthModes,
     });
     for (const name of CS_PLANHAT_DISCOVERY_VALIDATION_WINDOW_NAMES) delete sandboxEnv[name];
-    const discoveryValidationEnv = resolvePlanhatDiscoveryValidationSandboxEnv(
-      this.discoveryValidationEnv,
-      session.environment_id,
-      this.now()
-    );
+    const discoveryValidationEnv = includeFreshValidationWindow
+      ? resolvePlanhatDiscoveryValidationSandboxEnv(
+          this.discoveryValidationEnv,
+          {
+            environmentId: session.environment_id,
+            spawnSource: session.spawn_source,
+            parentSessionId: session.parent_session_id,
+            spawnDepth: session.spawn_depth,
+            repoOwner: session.repo_owner,
+            repoName: session.repo_name,
+            createdAt: session.created_at,
+          },
+          this.now()
+        )
+      : null;
     if (discoveryValidationEnv) Object.assign(sandboxEnv, discoveryValidationEnv);
     return { sandboxEnv, providerAuthModes, providerAccountIds };
   }

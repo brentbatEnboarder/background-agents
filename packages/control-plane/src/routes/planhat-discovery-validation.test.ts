@@ -44,8 +44,8 @@ describe("Planhat discovery validation route configuration", () => {
       .digest("hex");
 
     expect(manifest.baselineBindingCount).toBe(39);
-    expect(manifest.expectedBindingCount).toBe(47);
-    expect(manifest.bindings).toHaveLength(47);
+    expect(manifest.expectedBindingCount).toBe(48);
+    expect(manifest.bindings).toHaveLength(48);
     expect(baselineFingerprint).toBe(
       "f8fc3031e77dbd9fdcafd03eb5a57c889256eada0825eb7bd4e5247e7b4abdf6"
     );
@@ -77,6 +77,7 @@ describe("Planhat discovery validation route configuration", () => {
         readPlanhatDiscoveryValidationConfiguration(
           {
             PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
+            PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT: "2026-11-19T10:00:00.000Z",
             PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: expiresAt,
             PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID: "window-invented",
             PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID: "environment-invented",
@@ -104,6 +105,7 @@ describe("Planhat discovery validation route configuration", () => {
   it("accepts only the operation-specific operator probe", () => {
     const base = {
       PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
+      PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT: "2026-11-19T10:00:00.000Z",
       PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2026-11-19T10:30:00.000Z",
       PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID: "window-invented",
       PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID: "environment-invented",
@@ -116,7 +118,10 @@ describe("Planhat discovery validation route configuration", () => {
       )
     ).toEqual({
       operation: "planhat.mcp.validate-conversation-search",
+      issuedAt: NOW,
+      issuedAtIso: "2026-11-19T10:00:00.000Z",
       expiresAt: Date.parse("2026-11-19T10:30:00.000Z"),
+      expiresAtIso: "2026-11-19T10:30:00.000Z",
       windowId: "window-invented",
       environmentId: "environment-invented",
       probe: { searchQuery: "invented query" },
@@ -129,7 +134,10 @@ describe("Planhat discovery validation route configuration", () => {
       )
     ).toEqual({
       operation: "planhat.mcp.validate-conversation-list",
+      issuedAt: NOW,
+      issuedAtIso: "2026-11-19T10:00:00.000Z",
       expiresAt: Date.parse("2026-11-19T10:30:00.000Z"),
+      expiresAtIso: "2026-11-19T10:30:00.000Z",
       windowId: "window-invented",
       environmentId: "environment-invented",
       probe: { listCompanyId: "company-invented" },
@@ -146,7 +154,10 @@ describe("Planhat discovery validation route configuration", () => {
       )
     ).toEqual({
       operation: "planhat.mcp.validate-conversation-get",
+      issuedAt: NOW,
+      issuedAtIso: "2026-11-19T10:00:00.000Z",
       expiresAt: Date.parse("2026-11-19T10:30:00.000Z"),
+      expiresAtIso: "2026-11-19T10:30:00.000Z",
       windowId: "window-invented",
       environmentId: "environment-invented",
       probe: {
@@ -164,6 +175,7 @@ describe("Planhat discovery validation route configuration", () => {
 
 const ROUTE_ENVIRONMENT = {
   PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
+  PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT: "2026-11-19T10:00:00.000Z",
   PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2026-11-19T10:30:00.000Z",
   PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID: "window-invented",
   PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID: "environment-invented",
@@ -176,13 +188,16 @@ const ROUTE_CONTEXT = {
   trace_id: "trace-invented",
 } as unknown as SandboxRouteContext;
 
-function routeRequest(): Request {
+function routeRequest(body: Record<string, unknown> = {}): Request {
   return new Request("https://test.local/sessions/session-invented/validation", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Sandbox-ID": "sandbox-invented" },
     body: JSON.stringify({
       operation: "planhat.mcp.validate-conversation-search",
       windowId: "window-invented",
+      issuedAt: "2026-11-19T10:00:00.000Z",
+      expiresAt: "2026-11-19T10:30:00.000Z",
+      ...body,
     }),
   });
 }
@@ -190,12 +205,22 @@ function routeRequest(): Request {
 function routeDependencies(observe: (...args: never[]) => Promise<unknown>) {
   return {
     authorizeSandbox: vi.fn(() => null),
-    authorizeGateway: vi.fn(async () => ({
-      accessToken: "invented-access-token",
-      environmentId: "environment-invented",
-      automationId: null,
-      assignmentMode: "slack-environment" as const,
-    })),
+    authorizeGateway: vi.fn(
+      async (): Promise<
+        | Response
+        | {
+            accessToken: string;
+            environmentId: string;
+            automationId: null;
+            assignmentMode: "slack-environment";
+          }
+      > => ({
+        accessToken: "invented-access-token",
+        environmentId: "environment-invented",
+        automationId: null,
+        assignmentMode: "slack-environment" as const,
+      })
+    ),
     observe,
     now: vi.fn(() => NOW),
   };
@@ -241,6 +266,8 @@ describe("Planhat discovery validation route failures", () => {
       body: JSON.stringify({
         operation: "planhat.mcp.validate-conversation-search",
         windowId: "old-window-invented",
+        issuedAt: "2026-11-19T10:00:00.000Z",
+        expiresAt: "2026-11-19T10:30:00.000Z",
       }),
     });
     const response = await handleDiscoveryValidation(
@@ -252,6 +279,51 @@ describe("Planhat discovery validation route failures", () => {
     );
     expect(response.status).toBe(403);
     expect(dependencies.authorizeGateway).not.toHaveBeenCalled();
+    expect(dependencies.observe).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["issued-at", { issuedAt: "2026-11-19T10:00:00.001Z" }],
+    ["expiry", { expiresAt: "2026-11-19T10:29:59.999Z" }],
+  ])("rejects an exact %s mismatch before OAuth brokerage", async (_name, body) => {
+    const dependencies = routeDependencies(vi.fn());
+    const response = await handleDiscoveryValidation(
+      routeRequest(body),
+      ROUTE_ENVIRONMENT,
+      { id: "session-invented" },
+      ROUTE_CONTEXT,
+      dependencies as never
+    );
+    expect(response.status).toBe(403);
+    expect(dependencies.authorizeGateway).not.toHaveBeenCalled();
+    expect(dependencies.observe).not.toHaveBeenCalled();
+  });
+
+  it("rejects a rotated window at the pre-brokerage recheck with zero broker or provider calls", async () => {
+    let brokerCalls = 0;
+    const dependencies = routeDependencies(vi.fn());
+    dependencies.authorizeGateway.mockImplementation((async (...args: unknown[]) => {
+      ROUTE_ENVIRONMENT.PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID = "window-rotated";
+      const admission = args[6] as { validateBeforeBrokerage: () => boolean };
+      if (!admission.validateBeforeBrokerage()) return new Response(null, { status: 403 });
+      brokerCalls += 1;
+      return {
+        accessToken: "must-not-broker",
+        environmentId: "environment-invented",
+        automationId: null,
+        assignmentMode: "slack-environment" as const,
+      };
+    }) as never);
+    const response = await handleDiscoveryValidation(
+      routeRequest(),
+      ROUTE_ENVIRONMENT,
+      { id: "session-invented" },
+      ROUTE_CONTEXT,
+      dependencies as never
+    );
+    ROUTE_ENVIRONMENT.PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID = "window-invented";
+    expect(response.status).toBe(403);
+    expect(brokerCalls).toBe(0);
     expect(dependencies.observe).not.toHaveBeenCalled();
   });
 
@@ -277,7 +349,13 @@ describe("Planhat discovery validation route failures", () => {
       ROUTE_CONTEXT,
       expect.anything(),
       expect.any(Function),
-      { discoveryValidationEnvironmentId: "environment-invented" }
+      expect.objectContaining({
+        discoveryValidationEnvironmentId: "environment-invented",
+        discoveryValidationIssuedAt: NOW,
+        discoveryValidationExpiresAt: Date.parse("2026-11-19T10:30:00.000Z"),
+        discoveryValidationCurrentTime: expect.any(Function),
+        validateBeforeBrokerage: expect.any(Function),
+      })
     );
     expect(dependencies.observe).not.toHaveBeenCalled();
   });

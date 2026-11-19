@@ -27,7 +27,7 @@ import {
 } from "./shared";
 
 const logger = createLogger("router:planhat-discovery-validation");
-const REQUEST_MAX_BYTES = 256;
+const REQUEST_MAX_BYTES = 512;
 const RESPONSE_MAX_BYTES = 256 * 1024;
 const SAFE_PLANHAT_ID = /^[A-Za-z0-9][A-Za-z0-9-]{0,199}$/;
 
@@ -49,12 +49,17 @@ const requestSchema = z
       "planhat.mcp.validate-conversation-get",
     ]),
     windowId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/),
+    issuedAt: z.string().datetime({ offset: false, precision: 3 }),
+    expiresAt: z.string().datetime({ offset: false, precision: 3 }),
   })
   .strict();
 
 export interface PlanhatDiscoveryValidationConfiguration {
   operation: PlanhatDiscoveryValidationOperation;
+  issuedAt: number;
+  issuedAtIso: string;
   expiresAt: number;
+  expiresAtIso: string;
   windowId: string;
   environmentId: string;
   probe: PlanhatDiscoveryValidationProbe;
@@ -68,16 +73,34 @@ export function readPlanhatDiscoveryValidationConfiguration(
 ): PlanhatDiscoveryValidationConfiguration | null {
   const window = readPlanhatDiscoveryValidationWindow(env, now);
   if (!window) return null;
-  const { expiresAt, windowId, environmentId } = window;
+  const { issuedAt, issuedAtIso, expiresAt, expiresAtIso, windowId, environmentId } = window;
   if (operation === "planhat.mcp.validate-conversation-search") {
     const searchQuery = env.PLANHAT_DISCOVERY_VALIDATION_SEARCH_QUERY;
     if (!searchQuery || searchQuery.length > 500) return null;
-    return { operation, expiresAt, windowId, environmentId, probe: { searchQuery } };
+    return {
+      operation,
+      issuedAt,
+      issuedAtIso,
+      expiresAt,
+      expiresAtIso,
+      windowId,
+      environmentId,
+      probe: { searchQuery },
+    };
   }
   if (operation === "planhat.mcp.validate-conversation-list") {
     const listCompanyId = env.PLANHAT_DISCOVERY_VALIDATION_LIST_COMPANY_ID;
     if (!listCompanyId || !SAFE_PLANHAT_ID.test(listCompanyId)) return null;
-    return { operation, expiresAt, windowId, environmentId, probe: { listCompanyId } };
+    return {
+      operation,
+      issuedAt,
+      issuedAtIso,
+      expiresAt,
+      expiresAtIso,
+      windowId,
+      environmentId,
+      probe: { listCompanyId },
+    };
   }
   const getCompanyId = env.PLANHAT_DISCOVERY_VALIDATION_GET_COMPANY_ID;
   const getConversationId = env.PLANHAT_DISCOVERY_VALIDATION_GET_CONVERSATION_ID;
@@ -91,7 +114,10 @@ export function readPlanhatDiscoveryValidationConfiguration(
   }
   return {
     operation,
+    issuedAt,
+    issuedAtIso,
     expiresAt,
+    expiresAtIso,
     windowId,
     environmentId,
     probe: { getCompanyId, getConversationId },
@@ -123,6 +149,17 @@ function failure(correlationId: string, stage: string, status: number): Response
       stage,
     },
     status
+  );
+}
+
+function requestMatchesWindow(
+  parsed: z.infer<typeof requestSchema>,
+  configuration: PlanhatDiscoveryValidationConfiguration
+): boolean {
+  return (
+    parsed.windowId === configuration.windowId &&
+    parsed.issuedAt === configuration.issuedAtIso &&
+    parsed.expiresAt === configuration.expiresAtIso
   );
 }
 
@@ -161,7 +198,7 @@ export async function handleDiscoveryValidation(
     dependencies.now()
   );
   if (!configuration) return failure(correlationId, "authorization", 403);
-  if (parsed.windowId !== configuration.windowId) {
+  if (!requestMatchesWindow(parsed, configuration)) {
     return failure(correlationId, "authorization", 403);
   }
 
@@ -172,7 +209,20 @@ export async function handleDiscoveryValidation(
     ctx,
     logger,
     (stage, status) => failure(correlationId, stage, status),
-    { discoveryValidationEnvironmentId: configuration.environmentId }
+    {
+      discoveryValidationEnvironmentId: configuration.environmentId,
+      discoveryValidationIssuedAt: configuration.issuedAt,
+      discoveryValidationExpiresAt: configuration.expiresAt,
+      discoveryValidationCurrentTime: dependencies.now,
+      validateBeforeBrokerage: () => {
+        const current = readPlanhatDiscoveryValidationConfiguration(
+          env,
+          parsed.operation,
+          dependencies.now()
+        );
+        return current !== null && requestMatchesWindow(parsed, current);
+      },
+    }
   );
   if (authorized instanceof Response) return authorized;
   // Defense in depth for alternate dependency implementations: the strict helper
@@ -184,15 +234,20 @@ export async function handleDiscoveryValidation(
   ) {
     return failure(correlationId, "assignment", 403);
   }
-  if (dependencies.now() >= configuration.expiresAt) {
+  const currentConfiguration = readPlanhatDiscoveryValidationConfiguration(
+    env,
+    parsed.operation,
+    dependencies.now()
+  );
+  if (!currentConfiguration || !requestMatchesWindow(parsed, currentConfiguration)) {
     return failure(correlationId, "authorization", 403);
   }
 
   try {
     const observation = await dependencies.observe(
       authorized.accessToken,
-      configuration.operation,
-      configuration.probe
+      currentConfiguration.operation,
+      currentConfiguration.probe
     );
     if (
       !Number.isSafeInteger(observation.response.recordCount) ||

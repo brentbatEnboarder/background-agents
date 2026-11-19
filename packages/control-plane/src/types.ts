@@ -98,6 +98,7 @@ export interface EnvConfig {
   SECRETS_CAP_ENFORCEMENT?: string; // "enforce" (default) fails spawn/build on oversized secret payloads; set "warn" to only log
   // Short-lived, operator-owned Planhat discovery validation. All are absent by default.
   PLANHAT_DISCOVERY_VALIDATION_ENABLED?: string;
+  PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT?: string;
   PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT?: string;
   PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID?: string;
   PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID?: string;
