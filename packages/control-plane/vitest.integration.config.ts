@@ -3,6 +3,7 @@ import { defineConfig } from "vitest/config";
 import path from "path";
 import { webcrypto } from "node:crypto";
 import { createRequire } from "node:module";
+import { compactDiscoveryOverflowJsonRpc } from "./test/integration/planhat-discovery-fixtures";
 
 const migrationsPath = path.resolve(__dirname, "../../terraform/d1/migrations");
 
@@ -240,7 +241,12 @@ export default defineConfig({
                 });
               }
               const toolName = (body.params as { name?: string } | undefined)?.name;
-              if (toolName === "search_records" || toolName === "list_model_records") {
+              if (toolName === "list_model_records") {
+                return new Response(compactDiscoveryOverflowJsonRpc(body.id ?? 3), {
+                  headers: { "content-type": "application/json" },
+                });
+              }
+              if (toolName === "search_records") {
                 return Response.json({
                   jsonrpc: "2.0",
                   id: body.id,

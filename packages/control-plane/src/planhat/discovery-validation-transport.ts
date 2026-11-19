@@ -21,6 +21,9 @@ const MAX_IDENTITY_SHAPES = 20;
 const MAX_FIELD_PATH_LENGTH = 240;
 const MAX_FIELD_DEPTH = 20;
 const SAFE_SCHEMA_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,127}$/;
+const DYNAMIC_SCHEMA_KEY = "__dynamic__";
+// These are the only output keys established by the reviewed exact-get contract.
+const REVIEWED_OUTPUT_SCHEMA_KEYS = new Set(["_id", "companyId", "numberOfParts", "parts"]);
 
 type FailureStage = "initialize" | "acknowledge" | "schema" | "parse" | "identity";
 type FailureOutcome = "provider" | "timeout" | "oversized" | "malformed" | "unsupported";
@@ -301,10 +304,8 @@ function structuralFields(records: unknown[]): Array<{
       for (const item of value) visit(item, `${path}[]`, seen, depth + 1);
     } else if (value && typeof value === "object") {
       for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-        if (!SAFE_SCHEMA_NAME.test(key)) {
-          throw new PlanhatDiscoverySchemaTransportError("parse", "malformed");
-        }
-        visit(child, `${path}.${key}`, seen, depth + 1);
+        const structuralKey = REVIEWED_OUTPUT_SCHEMA_KEYS.has(key) ? key : DYNAMIC_SCHEMA_KEY;
+        visit(child, `${path}.${structuralKey}`, seen, depth + 1);
       }
     }
   };

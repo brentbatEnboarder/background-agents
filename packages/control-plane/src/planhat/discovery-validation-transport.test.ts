@@ -229,6 +229,72 @@ describe("Planhat discovery schema validation transport", () => {
     ).rejects.toMatchObject({ stage: "identity", outcome: "malformed" });
   });
 
+  it("replaces provider-controlled object keys with a non-sensitive structural marker", async () => {
+    const dynamicKeys = [
+      "507f1f77bcf86cd799439011",
+      "Acme_Corporation",
+      "Brent Pearson <brent.pearson@example.test>",
+    ];
+    const transport = vi
+      .fn()
+      .mockResolvedValueOnce(initialize())
+      .mockResolvedValueOnce(new Response(null, { status: 202 }))
+      .mockResolvedValueOnce(toolsList())
+      .mockResolvedValueOnce(
+        Response.json({
+          jsonrpc: "2.0",
+          id: 3,
+          result: {
+            structuredContent: {
+              records: [
+                {
+                  _id: "conversation-invented",
+                  companyId: "company-invented",
+                  parts: [
+                    {
+                      _id: "part-invented",
+                      [dynamicKeys[2]!]: "private body",
+                    },
+                  ],
+                  [dynamicKeys[0]!]: { [dynamicKeys[2]!]: true },
+                  [dynamicKeys[1]!]: "customer name",
+                },
+              ],
+            },
+          },
+        })
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    const observation = await observePlanhatDiscovery(
+      "invented-access-token",
+      "planhat.mcp.validate-conversation-search",
+      { searchQuery: "invented query" },
+      transport
+    );
+
+    expect(observation.schema.outputFields).toEqual([
+      { path: "$._id", types: ["string"], presenceCount: 1 },
+      { path: "$.companyId", types: ["string"], presenceCount: 1 },
+      { path: "$.parts", types: ["array"], presenceCount: 1 },
+      { path: "$.parts[]", types: ["object"], presenceCount: 1 },
+      { path: "$.parts[]._id", types: ["string"], presenceCount: 1 },
+      { path: "$.parts[].__dynamic__", types: ["string"], presenceCount: 1 },
+      { path: "$.__dynamic__", types: ["object", "string"], presenceCount: 1 },
+      { path: "$.__dynamic__.__dynamic__", types: ["boolean"], presenceCount: 1 },
+    ]);
+    const encoded = JSON.stringify(observation);
+    for (const key of dynamicKeys) {
+      expect(encoded).not.toContain(key);
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key));
+      const hex = [...new Uint8Array(digest)]
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join("");
+      expect(encoded).not.toContain(hex);
+    }
+    expect(encoded).not.toMatch(/Brent|Pearson|Acme|507f1f77|example\.test|private body/);
+  });
+
   it("rejects a 15,979-byte payload with the demonstrated 2,561-character path", async () => {
     const segment = "a".repeat(127);
     let record: Record<string, unknown> = { value: true };

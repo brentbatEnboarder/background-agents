@@ -4,9 +4,16 @@ import { AutomationStore, type AutomationRow } from "../../src/db/automation-sto
 import { PlanhatOAuthConnectionStore } from "../../src/db/planhat-oauth-connections";
 import { SessionIndexStore } from "../../src/db/session-index";
 import { PLANHAT_MCP_OPERATION } from "../../src/planhat/exact-conversation-transport";
-import { type PlanhatDiscoveryValidationOperation } from "../../src/planhat/discovery-validation-transport";
+import {
+  PLANHAT_DISCOVERY_MAX_RECORD_COUNT,
+  type PlanhatDiscoveryValidationOperation,
+} from "../../src/planhat/discovery-validation-transport";
 import { cleanD1Tables } from "./cleanup";
 import { initNamedSessionDO, seedActiveUser, seedSandboxAuth, sqlDatabase } from "./helpers";
+import {
+  COMPACT_DISCOVERY_OVERFLOW_RECORD_COUNT,
+  compactDiscoveryOverflowJsonRpc,
+} from "./planhat-discovery-fixtures";
 
 const ENVIRONMENT_ID = "env-planhat-gateway";
 const AUTOMATION_ID = "automation-alex-cs";
@@ -472,7 +479,6 @@ describe("Planhat Conversation discovery validation gateway", () => {
 
   it.each([
     "planhat.mcp.validate-conversation-search",
-    "planhat.mcp.validate-conversation-list",
     "planhat.mcp.validate-conversation-get",
   ] as const)("returns the exact text-free #245 envelope for %s", async (operation) => {
     const response = await discoveryValidationFetch(operation);
@@ -496,6 +502,30 @@ describe("Planhat Conversation discovery validation gateway", () => {
         identityShapes: expect.any(Array),
       },
     });
+  });
+
+  it("rejects the compact 100,001-record provider payload through the real route seam", async () => {
+    const providerPayload = compactDiscoveryOverflowJsonRpc(3);
+    expect(COMPACT_DISCOVERY_OVERFLOW_RECORD_COUNT).toBe(PLANHAT_DISCOVERY_MAX_RECORD_COUNT + 1);
+    expect(new TextEncoder().encode(providerPayload).byteLength).toBeLessThanOrEqual(256 * 1024);
+    expect(
+      (
+        JSON.parse(providerPayload) as {
+          result: { structuredContent: { records: unknown[] } };
+        }
+      ).result.structuredContent.records
+    ).toHaveLength(100_001);
+
+    const response = await discoveryValidationFetch("planhat.mcp.validate-conversation-list");
+    expect(response.status).toBe(502);
+    const body = await response.json<Record<string, unknown>>();
+    expect(body).toMatchObject({
+      error: "Planhat Conversation discovery validation unavailable",
+      stage: "parse",
+    });
+    expect(Object.keys(body).sort()).toEqual(["correlationId", "error", "stage"]);
+    expect(body).not.toHaveProperty("observation");
+    expect(body).not.toHaveProperty("operation");
   });
 
   it("rejects generic MCP, caller tools, models, fields, raw queries, mutation, redirects, and retries", async () => {
