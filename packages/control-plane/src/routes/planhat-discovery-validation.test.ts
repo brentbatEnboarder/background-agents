@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -32,10 +33,22 @@ describe("Planhat discovery validation route configuration", () => {
     const validationBindings = manifest.bindings.filter(({ name }) =>
       name.startsWith("PLANHAT_DISCOVERY_VALIDATION_")
     );
+    const baselineFingerprint = createHash("sha256")
+      .update(
+        manifest.bindings
+          .filter(({ name }) => !name.startsWith("PLANHAT_DISCOVERY_VALIDATION_"))
+          .sort((left, right) => left.name.localeCompare(right.name))
+          .map(({ name, type }) => `${name}:${type}\n`)
+          .join("")
+      )
+      .digest("hex");
 
     expect(manifest.baselineBindingCount).toBe(39);
     expect(manifest.expectedBindingCount).toBe(46);
     expect(manifest.bindings).toHaveLength(46);
+    expect(baselineFingerprint).toBe(
+      "f8fc3031e77dbd9fdcafd03eb5a57c889256eada0825eb7bd4e5247e7b4abdf6"
+    );
     expect(validationBindings.map(({ name }) => name).sort()).toEqual(
       [...PLANHAT_DISCOVERY_VALIDATION_CONFIGURATION_NAMES].sort()
     );
