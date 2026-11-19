@@ -33,6 +33,12 @@ import { buildSessionTargetSecretSources } from "./session-target-secrets";
 import type { SessionRepositoryEntry } from "./repository-target";
 import type { SessionCoreRepository } from "./session-core-repository";
 import type { SessionRow } from "./types";
+import type { Env } from "../types";
+import {
+  CS_PLANHAT_DISCOVERY_VALIDATION_WINDOW_NAMES,
+  resolvePlanhatDiscoveryValidationSandboxEnv,
+} from "../planhat/discovery-validation-window";
+import type { PLANHAT_DISCOVERY_VALIDATION_WINDOW_CONFIGURATION_NAMES } from "../planhat/discovery-validation-window";
 
 /**
  * Dependencies injected into UserEnvResolver.
@@ -50,6 +56,11 @@ export interface UserEnvResolverDeps {
   durableObjectId: string;
   repoSecretsEncryptionKey: string;
   secretsCapEnforcement: string | undefined;
+  discoveryValidationEnv: Pick<
+    Env,
+    (typeof PLANHAT_DISCOVERY_VALIDATION_WINDOW_CONFIGURATION_NAMES)[number]
+  >;
+  now?: () => number;
   /** The session-scoped logger; the composition root creates it before this class. */
   log: Logger;
 }
@@ -61,6 +72,28 @@ interface UserEnvContext {
   providerAccountIds: Partial<Record<SubscriptionProviderId, string>>;
 }
 
+interface CanonicalSessionInstant {
+  epochMs: number;
+  iso: string;
+}
+
+/**
+ * Session timestamps are stored as epoch milliseconds. Project each authority
+ * through the repository's canonical ISO representation before comparing it;
+ * values with another runtime representation (including offset ISO strings)
+ * are not eligible for the validation tuple.
+ */
+function canonicalSessionInstant(value: unknown): CanonicalSessionInstant | null {
+  if (!Number.isSafeInteger(value)) return null;
+  const epochMs = value as number;
+  try {
+    const iso = new Date(epochMs).toISOString();
+    return Date.parse(iso) === epochMs ? { epochMs, iso } : null;
+  } catch {
+    return null;
+  }
+}
+
 export class UserEnvResolver {
   private readonly db: SqlDatabase;
   private readonly sessionCoreRepository: SessionCoreRepository;
@@ -69,6 +102,8 @@ export class UserEnvResolver {
   private readonly repoSecretsEncryptionKey: string;
   private readonly secretsCapEnforcement: string | undefined;
   private readonly log: Logger;
+  private readonly discoveryValidationEnv: UserEnvResolverDeps["discoveryValidationEnv"];
+  private readonly now: () => number;
 
   constructor(deps: UserEnvResolverDeps) {
     this.db = deps.db;
@@ -77,6 +112,8 @@ export class UserEnvResolver {
     this.durableObjectId = deps.durableObjectId;
     this.repoSecretsEncryptionKey = deps.repoSecretsEncryptionKey;
     this.secretsCapEnforcement = deps.secretsCapEnforcement;
+    this.discoveryValidationEnv = deps.discoveryValidationEnv;
+    this.now = deps.now ?? Date.now;
     this.log = deps.log;
   }
 
@@ -84,8 +121,10 @@ export class UserEnvResolver {
    * The user-defined environment for the sandbox, or undefined when the
    * session is missing or the assembled environment is empty.
    */
-  async getUserEnvVars(): Promise<Record<string, string> | undefined> {
-    const context = await this.loadUserEnvContext();
+  async getUserEnvVars(
+    includeFreshValidationWindow = false
+  ): Promise<Record<string, string> | undefined> {
+    const context = await this.loadUserEnvContext(includeFreshValidationWindow);
     if (!context) return undefined;
     return Object.keys(context.sandboxEnv).length === 0 ? undefined : context.sandboxEnv;
   }
@@ -95,7 +134,7 @@ export class UserEnvResolver {
    * authentication in the assembled environment, or null when authenticated.
    */
   async getProviderAuthenticationError(model: string): Promise<string | null> {
-    const context = await this.loadUserEnvContext();
+    const context = await this.loadUserEnvContext(false);
     if (!context) return null;
     const accountIssue = await this.checkBoundAccount(model, context);
     if (accountIssue) return accountIssue;
@@ -140,7 +179,9 @@ export class UserEnvResolver {
     return null;
   }
 
-  private async loadUserEnvContext(): Promise<UserEnvContext | null> {
+  private async loadUserEnvContext(
+    includeFreshValidationWindow: boolean
+  ): Promise<UserEnvContext | null> {
     const session = this.sessionCoreRepository.getSession();
     if (!session) {
       this.log.warn("Cannot load secrets: no session");
@@ -148,9 +189,12 @@ export class UserEnvResolver {
     }
 
     const db = this.db;
-    const providerAuth = await new SessionIndexStore(db).getCompleteProviderAuth(
-      resolvePublicSessionId(session, this.durableObjectId)
-    );
+    const publicSessionId = resolvePublicSessionId(session, this.durableObjectId);
+    const sessionIndex = new SessionIndexStore(db);
+    const [providerAuth, indexedSession] = await Promise.all([
+      sessionIndex.getCompleteProviderAuth(publicSessionId),
+      includeFreshValidationWindow ? sessionIndex.get(publicSessionId) : Promise.resolve(null),
+    ]);
     const providerAuthModes = Object.fromEntries(
       providerAuth.map(({ provider, authMode }) => [provider, authMode])
     ) as Record<SubscriptionProviderId, SessionProviderAuthMode>;
@@ -170,6 +214,9 @@ export class UserEnvResolver {
     const repoStore = new RepoSecretsStore(db, encryptionKey);
     const environmentSecretsStore = new EnvironmentSecretsStore(db, encryptionKey);
     const members = this.sessionCoreRepository.getSessionRepositories();
+    const repositoryCount = includeFreshValidationWindow
+      ? this.sessionCoreRepository.getSessionRepositoryRows().length
+      : members.length;
     const sources = await buildSessionTargetSecretSources({
       environmentId: session.environment_id,
       globalSecrets,
@@ -211,6 +258,43 @@ export class UserEnvResolver {
       brokerSecrets: managedSecrets,
       providerAuthModes,
     });
+    for (const name of CS_PLANHAT_DISCOVERY_VALIDATION_WINDOW_NAMES) delete sandboxEnv[name];
+    const localCreatedAt = canonicalSessionInstant(session.created_at);
+    const indexedCreatedAt = canonicalSessionInstant(indexedSession?.createdAt);
+    const hasMatchingCreatedAt =
+      localCreatedAt !== null &&
+      indexedCreatedAt !== null &&
+      localCreatedAt.epochMs === indexedCreatedAt.epochMs &&
+      localCreatedAt.iso === indexedCreatedAt.iso;
+    const discoveryValidationEnv = includeFreshValidationWindow
+      ? indexedSession &&
+        hasMatchingCreatedAt &&
+        indexedSession.environmentId === session.environment_id &&
+        indexedSession.spawnSource === session.spawn_source &&
+        indexedSession.parentSessionId === session.parent_session_id &&
+        indexedSession.spawnDepth === session.spawn_depth &&
+        indexedSession.repoOwner === session.repo_owner &&
+        indexedSession.repoName === session.repo_name
+        ? resolvePlanhatDiscoveryValidationSandboxEnv(
+            this.discoveryValidationEnv,
+            {
+              environmentId: indexedSession.environmentId,
+              spawnSource: indexedSession.spawnSource,
+              userId: indexedSession.userId,
+              automationId: indexedSession.automationId,
+              parentSessionId: indexedSession.parentSessionId,
+              spawnDepth: indexedSession.spawnDepth,
+              repoOwner: indexedSession.repoOwner,
+              repoName: indexedSession.repoName,
+              repoId: session.repo_id,
+              repositoryCount,
+              createdAt: indexedCreatedAt!.epochMs,
+            },
+            this.now()
+          )
+        : null
+      : null;
+    if (discoveryValidationEnv) Object.assign(sandboxEnv, discoveryValidationEnv);
     return { sandboxEnv, providerAuthModes, providerAccountIds };
   }
 

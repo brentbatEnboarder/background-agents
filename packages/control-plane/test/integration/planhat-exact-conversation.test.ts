@@ -9,7 +9,14 @@ import {
   type PlanhatDiscoveryValidationOperation,
 } from "../../src/planhat/discovery-validation-transport";
 import { cleanD1Tables } from "./cleanup";
-import { initNamedSessionDO, seedActiveUser, seedSandboxAuth, sqlDatabase } from "./helpers";
+import {
+  initNamedSessionDO,
+  seedActiveUser,
+  seedSandboxAuth,
+  sqlDatabase,
+  TEST_SESSION_PROVIDER_AUTH,
+} from "./helpers";
+import { getUserEnvVars, runInSessionDO } from "./session-do-access";
 import {
   COMPACT_DISCOVERY_OVERFLOW_RECORD_COUNT,
   compactDiscoveryOverflowJsonRpc,
@@ -83,10 +90,18 @@ async function seedSession(
     spawnDepth?: number;
     repoOwner?: string | null;
     repoName?: string | null;
+    repoId?: number | null;
+    createdAt?: number;
+    indexedCreatedAt?: number;
+    localCreatedAt?: number;
   } = {}
-): Promise<void> {
+): Promise<DurableObjectStub> {
   const sessionId = input.sessionId ?? activeSessionId;
-  const now = Date.now();
+  const now =
+    input.createdAt ??
+    Math.max(Date.now(), Date.parse(env.PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT ?? "") + 1);
+  const indexedCreatedAt = input.indexedCreatedAt ?? now;
+  const localCreatedAt = input.localCreatedAt ?? now;
   await new SessionIndexStore(sqlDatabase(env.DB)).create({
     id: sessionId,
     title: "Invented Alex session",
@@ -107,13 +122,41 @@ async function seedSession(
         : input.automationId,
     userId: input.userId ?? null,
     environmentId: input.environmentId ?? ENVIRONMENT_ID,
-    createdAt: now,
-    updatedAt: now,
+    providerAuth: TEST_SESSION_PROVIDER_AUTH,
+    createdAt: indexedCreatedAt,
+    updatedAt: indexedCreatedAt,
   });
-  const { stub } = await initNamedSessionDO(sessionId);
+  const { stub } = await initNamedSessionDO(sessionId, {
+    environmentId: input.environmentId ?? ENVIRONMENT_ID,
+    repoOwner: input.repoOwner ?? null,
+    repoName: input.repoName ?? null,
+    repoId: input.repoOwner && input.repoName ? (input.repoId ?? 12345) : null,
+    defaultBranch: input.repoOwner && input.repoName ? "main" : null,
+    spawnSource: input.spawnSource ?? "automation",
+    parentSessionId: input.parentSessionId ?? null,
+    spawnDepth: input.spawnDepth ?? 0,
+    createdAt: localCreatedAt,
+    userId: input.userId ?? "integration-actor",
+  });
   await seedSandboxAuth(stub, {
     authToken: input.sandboxToken ?? activeSandboxToken,
     sandboxId: input.sandboxId ?? activeSandboxId,
+  });
+  return stub;
+}
+
+async function replaceLocalSessionCreatedAt(
+  stub: DurableObjectStub,
+  createdAt: string
+): Promise<void> {
+  await runInSessionDO(stub, (_instance, state) => {
+    state.storage.sql.exec("UPDATE session SET created_at = ?", createdAt);
+  });
+}
+
+async function deleteLocalSession(stub: DurableObjectStub): Promise<void> {
+  await runInSessionDO(stub, (_instance, state) => {
+    state.storage.sql.exec("DELETE FROM session");
   });
 }
 
@@ -208,7 +251,14 @@ function discoveryValidationFetch(
         "X-Sandbox-ID": overrides.sandboxId ?? activeSandboxId,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(overrides.body ?? { operation }),
+      body: JSON.stringify(
+        overrides.body ?? {
+          operation,
+          windowId: "window-invented",
+          issuedAt: env.PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT,
+          expiresAt: env.PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT,
+        }
+      ),
     }
   );
 }
@@ -586,7 +636,12 @@ describe("Planhat Conversation discovery validation gateway", () => {
       expect(
         (
           await discoveryValidationFetch("planhat.mcp.validate-conversation-search", {
-            body: candidate,
+            body: {
+              windowId: "window-invented",
+              issuedAt: env.PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT,
+              expiresAt: env.PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT,
+              ...candidate,
+            },
           })
         ).status
       ).toBe(400);
@@ -628,6 +683,179 @@ describe("Planhat Conversation discovery validation gateway", () => {
     expect(
       (await discoveryValidationFetch("planhat.mcp.validate-conversation-search")).status
     ).toBe(403);
+  });
+
+  it("denies a pre-window Slack session and an exact-expiry mismatch before the provider seam", async () => {
+    const oldSessionId = "validation-pre-window-session";
+    const oldSandboxId = "sandbox-validation-pre-window";
+    const oldSandboxToken = "token-validation-pre-window";
+    await seedSession({
+      sessionId: oldSessionId,
+      spawnSource: "slack-bot",
+      userId: USER_ID,
+      sandboxId: oldSandboxId,
+      sandboxToken: oldSandboxToken,
+      createdAt: Date.parse(env.PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT!) - 1,
+    });
+    expect(
+      (
+        await discoveryValidationFetch("planhat.mcp.validate-conversation-search", {
+          sessionId: oldSessionId,
+          sandboxId: oldSandboxId,
+          sandboxToken: oldSandboxToken,
+        })
+      ).status
+    ).toBe(403);
+
+    expect(
+      (
+        await discoveryValidationFetch("planhat.mcp.validate-conversation-search", {
+          body: {
+            operation: "planhat.mcp.validate-conversation-search",
+            windowId: "window-invented",
+            issuedAt: env.PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT,
+            expiresAt: new Date(
+              Date.parse(env.PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT!) - 1
+            ).toISOString(),
+          },
+        })
+      ).status
+    ).toBe(403);
+  });
+
+  it("exposes the complete tuple only to one fresh canonical Alex Slack session", async () => {
+    const ineligible = [
+      { id: "tuple-actorless", userId: null },
+      { id: "tuple-noncanonical", userId: "slack:U123" },
+      { id: "tuple-automation-linked", userId: USER_ID, automationId: AUTOMATION_ID },
+      { id: "tuple-web", userId: USER_ID, spawnSource: "user" as const },
+      {
+        id: "tuple-child",
+        userId: USER_ID,
+        spawnSource: "slack-bot" as const,
+        parentSessionId: activeSessionId,
+        spawnDepth: 1,
+      },
+      {
+        id: "tuple-repository",
+        userId: USER_ID,
+        spawnSource: "slack-bot" as const,
+        repoOwner: "invented",
+        repoName: "repository",
+        repoId: 12345,
+      },
+      {
+        id: "tuple-pre-window",
+        userId: USER_ID,
+        spawnSource: "slack-bot" as const,
+        createdAt: Date.parse(env.PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT!) - 1,
+      },
+    ];
+
+    for (const candidate of ineligible) {
+      const stub = await seedSession({
+        ...candidate,
+        sessionId: candidate.id,
+        spawnSource: candidate.spawnSource ?? "slack-bot",
+      });
+      const sandboxEnv = await getUserEnvVars(stub, true);
+      expect(
+        Object.keys(sandboxEnv ?? {}).filter((key) =>
+          key.startsWith("CS_PLANHAT_DISCOVERY_VALIDATION_")
+        ),
+        candidate.id
+      ).toEqual([]);
+    }
+
+    const otherEnvironment = "env-planhat-tuple-other";
+    await seedEnvironment(otherEnvironment);
+    const wrongEnvironmentStub = await seedSession({
+      sessionId: "tuple-wrong-environment",
+      spawnSource: "slack-bot",
+      userId: USER_ID,
+      environmentId: otherEnvironment,
+    });
+    expect(
+      Object.keys((await getUserEnvVars(wrongEnvironmentStub, true)) ?? {}).filter((key) =>
+        key.startsWith("CS_PLANHAT_DISCOVERY_VALIDATION_")
+      )
+    ).toEqual([]);
+
+    const qualifyingStub = await seedSession({
+      sessionId: "tuple-qualifying",
+      spawnSource: "slack-bot",
+      userId: USER_ID,
+    });
+    await expect(getUserEnvVars(qualifyingStub, false)).resolves.toBeUndefined();
+    await expect(getUserEnvVars(qualifyingStub, true)).resolves.toEqual({
+      CS_PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
+      CS_PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT: env.PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT,
+      CS_PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: env.PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT,
+      CS_PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID: "window-invented",
+    });
+  });
+
+  it("requires exact local/index creation-time authority before exposing the tuple", async () => {
+    const fresh = Math.max(Date.now(), Date.parse(env.PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT!) + 1);
+    const old = Date.parse(env.PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT!) - 1;
+    const mismatches = [
+      { id: "tuple-fresh-index-old-local", indexedCreatedAt: fresh, localCreatedAt: old },
+      { id: "tuple-old-index-fresh-local", indexedCreatedAt: old, localCreatedAt: fresh },
+    ];
+    for (const candidate of mismatches) {
+      const stub = await seedSession({
+        ...candidate,
+        sessionId: candidate.id,
+        spawnSource: "slack-bot",
+        userId: USER_ID,
+      });
+      expect(
+        Object.keys((await getUserEnvVars(stub, true)) ?? {}).filter((key) =>
+          key.startsWith("CS_PLANHAT_DISCOVERY_VALIDATION_")
+        ),
+        candidate.id
+      ).toEqual([]);
+    }
+
+    const offsetStub = await seedSession({
+      sessionId: "tuple-equivalent-offset-local",
+      spawnSource: "slack-bot",
+      userId: USER_ID,
+      createdAt: fresh,
+    });
+    await replaceLocalSessionCreatedAt(
+      offsetStub,
+      new Date(fresh).toISOString().replace("Z", "+00:00")
+    );
+    expect(
+      Object.keys((await getUserEnvVars(offsetStub, true)) ?? {}).filter((key) =>
+        key.startsWith("CS_PLANHAT_DISCOVERY_VALIDATION_")
+      )
+    ).toEqual([]);
+
+    const invalidIndexStub = await seedSession({
+      sessionId: "tuple-invalid-index-time",
+      spawnSource: "slack-bot",
+      userId: USER_ID,
+      createdAt: fresh,
+    });
+    await env.DB.prepare("UPDATE sessions SET created_at = ? WHERE id = ?")
+      .bind(new Date(fresh).toISOString().replace("Z", "+00:00"), "tuple-invalid-index-time")
+      .run();
+    expect(
+      Object.keys((await getUserEnvVars(invalidIndexStub, true)) ?? {}).filter((key) =>
+        key.startsWith("CS_PLANHAT_DISCOVERY_VALIDATION_")
+      )
+    ).toEqual([]);
+
+    const missingLocalStub = await seedSession({
+      sessionId: "tuple-missing-local-time",
+      spawnSource: "slack-bot",
+      userId: USER_ID,
+      createdAt: fresh,
+    });
+    await deleteLocalSession(missingLocalStub);
+    await expect(getUserEnvVars(missingLocalStub, true)).resolves.toBeUndefined();
   });
 
   it("turns the prior direct automation-sandbox bypass into a fail-closed denial", async () => {

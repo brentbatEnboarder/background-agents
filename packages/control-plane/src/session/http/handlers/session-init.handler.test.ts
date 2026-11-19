@@ -134,6 +134,7 @@ describe("SessionInitHandler", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           sessionName: "session-public-id",
+          createdAt: 1200,
           repoOwner: "acme",
           repoName: "repo",
           repoId: 123,
@@ -181,7 +182,7 @@ describe("SessionInitHandler", () => {
       sandboxSettings: null,
       maxCostUsd: null,
       environmentId: null,
-      createdAt: 1234,
+      createdAt: 1200,
       updatedAt: 1234,
     });
     expect(sandboxRepository.createSandbox).toHaveBeenCalledWith({
