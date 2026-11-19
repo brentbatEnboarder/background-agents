@@ -17,7 +17,7 @@ import {
 
 const ENVIRONMENT_ID = "env-planhat-gateway";
 const AUTOMATION_ID = "automation-alex-cs";
-const USER_ID = "user-alex-cs";
+const USER_ID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 let sessionSequence = 0;
 let activeSessionId = "";
 let activeSandboxId = "";
@@ -81,6 +81,8 @@ async function seedSession(
     userId?: string | null;
     parentSessionId?: string | null;
     spawnDepth?: number;
+    repoOwner?: string | null;
+    repoName?: string | null;
   } = {}
 ): Promise<void> {
   const sessionId = input.sessionId ?? activeSessionId;
@@ -88,8 +90,8 @@ async function seedSession(
   await new SessionIndexStore(sqlDatabase(env.DB)).create({
     id: sessionId,
     title: "Invented Alex session",
-    repoOwner: null,
-    repoName: null,
+    repoOwner: input.repoOwner ?? null,
+    repoName: input.repoName ?? null,
     model: "anthropic/claude-haiku-4-5",
     reasoningEffort: null,
     baseBranch: null,
@@ -189,10 +191,15 @@ function gatewayFetch(
 
 function discoveryValidationFetch(
   operation: PlanhatDiscoveryValidationOperation,
-  overrides: { body?: unknown; sandboxId?: string; sandboxToken?: string } = {}
+  overrides: {
+    body?: unknown;
+    sessionId?: string;
+    sandboxId?: string;
+    sandboxToken?: string;
+  } = {}
 ): Promise<Response> {
   return SELF.fetch(
-    `https://test.local/sessions/${activeSessionId}/planhat-mcp/conversation-discovery-validation`,
+    `https://test.local/sessions/${overrides.sessionId ?? activeSessionId}/planhat-mcp/conversation-discovery-validation`,
     {
       method: "POST",
       headers: {
@@ -473,8 +480,8 @@ describe("Planhat Conversation discovery validation gateway", () => {
     await seedActiveUser(USER_ID);
     await seedEnvironment();
     await seedAutomation();
-    await seedSession();
-    await seedConnection();
+    await seedSession({ spawnSource: "slack-bot", userId: USER_ID });
+    await seedConnection(true, "slack-environment");
   });
 
   it.each([
@@ -593,10 +600,120 @@ describe("Planhat Conversation discovery validation gateway", () => {
         })
       ).status
     ).toBe(403);
+    expect(
+      (
+        await discoveryValidationFetch("planhat.mcp.validate-conversation-search", {
+          sandboxToken: "wrong-token",
+        })
+      ).status
+    ).toBe(401);
+    await seedSession({
+      sessionId: "validation-other-sandbox-session",
+      spawnSource: "slack-bot",
+      userId: USER_ID,
+      sandboxId: "sandbox-validation-other-session",
+      sandboxToken: "token-validation-other-session",
+    });
+    expect(
+      (
+        await discoveryValidationFetch("planhat.mcp.validate-conversation-search", {
+          sandboxId: "sandbox-validation-other-session",
+          sandboxToken: "token-validation-other-session",
+        })
+      ).status
+    ).toBe(401);
     const store = new PlanhatOAuthConnectionStore(sqlDatabase(env.DB), env.TOKEN_ENCRYPTION_KEY);
     await store.setAssignment(ENVIRONMENT_ID, false, "automation", null, 2);
     expect(
       (await discoveryValidationFetch("planhat.mcp.validate-conversation-search")).status
     ).toBe(403);
+  });
+
+  it("turns the prior direct automation-sandbox bypass into a fail-closed denial", async () => {
+    const store = new PlanhatOAuthConnectionStore(sqlDatabase(env.DB), env.TOKEN_ENCRYPTION_KEY);
+    await store.setAssignment(ENVIRONMENT_ID, false, "slack-environment", null, 2);
+    await store.setAssignment(ENVIRONMENT_ID, true, "automation", AUTOMATION_ID, 3);
+    await seedSession({
+      sessionId: "session-direct-automation-validation",
+      spawnSource: "automation",
+      automationId: AUTOMATION_ID,
+      sandboxId: "sandbox-direct-automation-validation",
+      sandboxToken: "token-direct-automation-validation",
+    });
+
+    const response = await discoveryValidationFetch("planhat.mcp.validate-conversation-search", {
+      sessionId: "session-direct-automation-validation",
+      sandboxId: "sandbox-direct-automation-validation",
+      sandboxToken: "token-direct-automation-validation",
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ stage: "assignment" });
+  });
+
+  it("admits only a repository-free top-level canonical Slack actor in the exact environment", async () => {
+    const candidates = [
+      { id: "validation-web", spawnSource: "user" as const, userId: USER_ID },
+      { id: "validation-actorless", spawnSource: "slack-bot" as const, userId: null },
+      { id: "validation-noncanonical", spawnSource: "slack-bot" as const, userId: "slack:U123" },
+      {
+        id: "validation-child",
+        spawnSource: "agent" as const,
+        userId: USER_ID,
+        parentSessionId: activeSessionId,
+        spawnDepth: 1,
+      },
+      {
+        id: "validation-repository",
+        spawnSource: "slack-bot" as const,
+        userId: USER_ID,
+        repoOwner: "invented",
+        repoName: "repository",
+      },
+      {
+        id: "validation-slack-with-automation",
+        spawnSource: "slack-bot" as const,
+        userId: USER_ID,
+        automationId: AUTOMATION_ID,
+      },
+    ];
+
+    for (const candidate of candidates) {
+      const sandboxId = `sandbox-${candidate.id}`;
+      const sandboxToken = `token-${candidate.id}`;
+      await seedSession({ ...candidate, sessionId: candidate.id, sandboxId, sandboxToken });
+      const response = await discoveryValidationFetch("planhat.mcp.validate-conversation-search", {
+        sessionId: candidate.id,
+        sandboxId,
+        sandboxToken,
+      });
+      expect(response.status, candidate.id).toBe(403);
+      expect(await response.json()).toMatchObject({ stage: "assignment" });
+    }
+
+    const otherEnvironment = "env-planhat-other";
+    await seedEnvironment(otherEnvironment);
+    await seedSession({
+      sessionId: "validation-wrong-environment",
+      spawnSource: "slack-bot",
+      userId: USER_ID,
+      environmentId: otherEnvironment,
+      sandboxId: "sandbox-validation-wrong-environment",
+      sandboxToken: "token-validation-wrong-environment",
+    });
+    const wrongEnvironment = await discoveryValidationFetch(
+      "planhat.mcp.validate-conversation-search",
+      {
+        sessionId: "validation-wrong-environment",
+        sandboxId: "sandbox-validation-wrong-environment",
+        sandboxToken: "token-validation-wrong-environment",
+      }
+    );
+    expect(wrongEnvironment.status).toBe(403);
+
+    const qualifying = await discoveryValidationFetch("planhat.mcp.validate-conversation-search");
+    expect(qualifying.status).toBe(200);
+    await expect(qualifying.json()).resolves.toMatchObject({
+      operation: "planhat.mcp.validate-conversation-search",
+    });
   });
 });

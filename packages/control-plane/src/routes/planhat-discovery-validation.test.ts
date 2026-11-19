@@ -27,6 +27,7 @@ describe("Planhat discovery validation route configuration", () => {
           {
             PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
             PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: expiresAt,
+            PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID: "environment-invented",
             PLANHAT_DISCOVERY_VALIDATION_SEARCH_QUERY: "invented query",
           },
           "planhat.mcp.validate-conversation-search",
@@ -34,12 +35,24 @@ describe("Planhat discovery validation route configuration", () => {
         )
       ).toBeNull();
     }
+    expect(
+      readPlanhatDiscoveryValidationConfiguration(
+        {
+          PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
+          PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2026-11-19T10:30:00.000Z",
+          PLANHAT_DISCOVERY_VALIDATION_SEARCH_QUERY: "invented query",
+        },
+        "planhat.mcp.validate-conversation-search",
+        NOW
+      )
+    ).toBeNull();
   });
 
   it("accepts only the operation-specific operator probe", () => {
     const base = {
       PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
       PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2026-11-19T10:30:00.000Z",
+      PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID: "environment-invented",
     };
     expect(
       readPlanhatDiscoveryValidationConfiguration(
@@ -50,6 +63,7 @@ describe("Planhat discovery validation route configuration", () => {
     ).toEqual({
       operation: "planhat.mcp.validate-conversation-search",
       expiresAt: Date.parse("2026-11-19T10:30:00.000Z"),
+      environmentId: "environment-invented",
       probe: { searchQuery: "invented query" },
     });
     expect(
@@ -61,6 +75,7 @@ describe("Planhat discovery validation route configuration", () => {
     ).toEqual({
       operation: "planhat.mcp.validate-conversation-list",
       expiresAt: Date.parse("2026-11-19T10:30:00.000Z"),
+      environmentId: "environment-invented",
       probe: { listCompanyId: "company-invented" },
     });
     expect(
@@ -76,6 +91,7 @@ describe("Planhat discovery validation route configuration", () => {
     ).toEqual({
       operation: "planhat.mcp.validate-conversation-get",
       expiresAt: Date.parse("2026-11-19T10:30:00.000Z"),
+      environmentId: "environment-invented",
       probe: {
         getCompanyId: "company-invented",
         getConversationId: "conversation-invented",
@@ -92,6 +108,7 @@ describe("Planhat discovery validation route configuration", () => {
 const ROUTE_ENVIRONMENT = {
   PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
   PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2026-11-19T10:30:00.000Z",
+  PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID: "environment-invented",
   PLANHAT_DISCOVERY_VALIDATION_SEARCH_QUERY: "invented query",
 } as unknown as Env;
 
@@ -115,8 +132,8 @@ function routeDependencies(observe: (...args: never[]) => Promise<unknown>) {
     authorizeGateway: vi.fn(async () => ({
       accessToken: "invented-access-token",
       environmentId: "environment-invented",
-      automationId: "automation-invented",
-      assignmentMode: "automation" as const,
+      automationId: null,
+      assignmentMode: "slack-environment" as const,
     })),
     observe,
     now: vi.fn(() => NOW),
@@ -162,6 +179,15 @@ describe("Planhat discovery validation route failures", () => {
     );
     expect(response.status).toBe(403);
     expect(dependencies.authorizeGateway).toHaveBeenCalledOnce();
+    expect(dependencies.authorizeGateway).toHaveBeenCalledWith(
+      expect.any(Request),
+      ROUTE_ENVIRONMENT,
+      "session-invented",
+      ROUTE_CONTEXT,
+      expect.anything(),
+      expect.any(Function),
+      { discoveryValidationEnvironmentId: "environment-invented" }
+    );
     expect(dependencies.observe).not.toHaveBeenCalled();
   });
 

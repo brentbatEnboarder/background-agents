@@ -27,6 +27,7 @@ const REQUEST_MAX_BYTES = 256;
 const RESPONSE_MAX_BYTES = 256 * 1024;
 const MAX_AUTHORIZATION_WINDOW_MS = 30 * 60 * 1000;
 const SAFE_PLANHAT_ID = /^[A-Za-z0-9][A-Za-z0-9-]{0,199}$/;
+const SAFE_ENVIRONMENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/;
 
 const requestSchema = z
   .object({
@@ -41,6 +42,7 @@ const requestSchema = z
 export interface PlanhatDiscoveryValidationConfiguration {
   operation: PlanhatDiscoveryValidationOperation;
   expiresAt: number;
+  environmentId: string;
   probe: PlanhatDiscoveryValidationProbe;
 }
 
@@ -50,6 +52,7 @@ export function readPlanhatDiscoveryValidationConfiguration(
     Env,
     | "PLANHAT_DISCOVERY_VALIDATION_ENABLED"
     | "PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT"
+    | "PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID"
     | "PLANHAT_DISCOVERY_VALIDATION_SEARCH_QUERY"
     | "PLANHAT_DISCOVERY_VALIDATION_LIST_COMPANY_ID"
     | "PLANHAT_DISCOVERY_VALIDATION_GET_COMPANY_ID"
@@ -59,6 +62,8 @@ export function readPlanhatDiscoveryValidationConfiguration(
   now = Date.now()
 ): PlanhatDiscoveryValidationConfiguration | null {
   if (env.PLANHAT_DISCOVERY_VALIDATION_ENABLED !== "true") return null;
+  const environmentId = env.PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID;
+  if (!environmentId || !SAFE_ENVIRONMENT_ID.test(environmentId)) return null;
   const expiresAt = Date.parse(env.PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT ?? "");
   if (
     !Number.isFinite(expiresAt) ||
@@ -70,12 +75,12 @@ export function readPlanhatDiscoveryValidationConfiguration(
   if (operation === "planhat.mcp.validate-conversation-search") {
     const searchQuery = env.PLANHAT_DISCOVERY_VALIDATION_SEARCH_QUERY;
     if (!searchQuery || searchQuery.length > 500) return null;
-    return { operation, expiresAt, probe: { searchQuery } };
+    return { operation, expiresAt, environmentId, probe: { searchQuery } };
   }
   if (operation === "planhat.mcp.validate-conversation-list") {
     const listCompanyId = env.PLANHAT_DISCOVERY_VALIDATION_LIST_COMPANY_ID;
     if (!listCompanyId || !SAFE_PLANHAT_ID.test(listCompanyId)) return null;
-    return { operation, expiresAt, probe: { listCompanyId } };
+    return { operation, expiresAt, environmentId, probe: { listCompanyId } };
   }
   const getCompanyId = env.PLANHAT_DISCOVERY_VALIDATION_GET_COMPANY_ID;
   const getConversationId = env.PLANHAT_DISCOVERY_VALIDATION_GET_CONVERSATION_ID;
@@ -87,7 +92,7 @@ export function readPlanhatDiscoveryValidationConfiguration(
   ) {
     return null;
   }
-  return { operation, expiresAt, probe: { getCompanyId, getConversationId } };
+  return { operation, expiresAt, environmentId, probe: { getCompanyId, getConversationId } };
 }
 
 async function readRequest(request: Request): Promise<z.infer<typeof requestSchema> | Response> {
@@ -160,9 +165,19 @@ export async function handleDiscoveryValidation(
     params.id,
     ctx,
     logger,
-    (stage, status) => failure(correlationId, stage, status)
+    (stage, status) => failure(correlationId, stage, status),
+    { discoveryValidationEnvironmentId: configuration.environmentId }
   );
   if (authorized instanceof Response) return authorized;
+  // Defense in depth for alternate dependency implementations: the strict helper
+  // performs this check before OAuth brokerage, and the route checks again before MCP.
+  if (
+    authorized.environmentId !== configuration.environmentId ||
+    authorized.assignmentMode !== "slack-environment" ||
+    authorized.automationId !== null
+  ) {
+    return failure(correlationId, "assignment", 403);
+  }
   if (dependencies.now() >= configuration.expiresAt) {
     return failure(correlationId, "authorization", 403);
   }

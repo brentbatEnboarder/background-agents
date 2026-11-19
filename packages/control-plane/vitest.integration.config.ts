@@ -372,6 +372,7 @@ export default defineConfig({
             PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: new Date(
               Date.now() + 30 * 60 * 1000
             ).toISOString(),
+            PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID: "env-planhat-gateway",
             PLANHAT_DISCOVERY_VALIDATION_SEARCH_QUERY: "invented validation query",
             PLANHAT_DISCOVERY_VALIDATION_LIST_COMPANY_ID: "company-validation-invented",
             PLANHAT_DISCOVERY_VALIDATION_GET_COMPANY_ID: "company-validation-invented",

@@ -1,3 +1,4 @@
+import { isCanonicalUserId } from "@open-inspect/shared/user-id";
 import {
   PlanhatOAuthAssignmentDisabledError,
   PlanhatOAuthConcurrencyError,
@@ -22,6 +23,11 @@ export interface AuthorizedPlanhatGateway {
   assignmentMode: "automation" | "slack-environment";
 }
 
+export interface PlanhatGatewayAdmission {
+  /** Omitted for the exact Conversation route, which retains automation compatibility. */
+  discoveryValidationEnvironmentId?: string;
+}
+
 type Failure = (stage: string, status: number, message?: string) => Response;
 
 /** Preserve the exact route's fail-closed sandbox check before reading its body. */
@@ -44,7 +50,8 @@ export async function authorizePlanhatGateway(
   sessionId: string,
   ctx: SandboxRouteContext,
   logger: Logger,
-  failure: Failure
+  failure: Failure,
+  admission: PlanhatGatewayAdmission = {}
 ): Promise<AuthorizedPlanhatGateway | Response> {
   const sandboxFailure = authorizePlanhatSandbox(request, ctx, failure);
   if (sandboxFailure) return sandboxFailure;
@@ -73,6 +80,23 @@ export async function authorizePlanhatGateway(
   }
   if (connection.environmentId !== session.environmentId || !connection.assignmentEnabled) {
     return failure("assignment", 403, "Planhat gateway is not assigned");
+  }
+
+  if (admission.discoveryValidationEnvironmentId !== undefined) {
+    const isApprovedSlackValidationSession =
+      session.environmentId === admission.discoveryValidationEnvironmentId &&
+      connection.assignmentMode === "slack-environment" &&
+      connection.assignedAutomationId === null &&
+      session.spawnSource === "slack-bot" &&
+      isCanonicalUserId(session.userId) &&
+      session.automationId === null &&
+      session.parentSessionId === null &&
+      session.spawnDepth === 0 &&
+      session.repoOwner === null &&
+      session.repoName === null;
+    if (!isApprovedSlackValidationSession) {
+      return failure("assignment", 403, "Planhat gateway is not assigned");
+    }
   }
 
   let expectedAssignment: PlanhatExpectedAssignment;
