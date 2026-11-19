@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   PLANHAT_DISCOVERY_MAX_RECORD_COUNT,
@@ -7,12 +8,49 @@ import type { Env } from "../types";
 import type { SandboxRouteContext } from "./shared";
 import {
   handleDiscoveryValidation,
+  PLANHAT_DISCOVERY_VALIDATION_CONFIGURATION_NAMES,
   readPlanhatDiscoveryValidationConfiguration,
 } from "./planhat-discovery-validation";
 
 const NOW = Date.parse("2026-11-19T10:00:00.000Z");
 
 describe("Planhat discovery validation route configuration", () => {
+  it("matches the reviewed issue #246 deployment envelope", () => {
+    const manifest = JSON.parse(
+      readFileSync(
+        new URL(
+          "../../../../terraform/environments/production/candidates/issue-246-planhat-discovery-validation.bindings.json",
+          import.meta.url
+        ),
+        "utf8"
+      )
+    ) as {
+      baselineBindingCount: number;
+      expectedBindingCount: number;
+      bindings: Array<{ name: string; type: string; value?: string }>;
+    };
+    const validationBindings = manifest.bindings.filter(({ name }) =>
+      name.startsWith("PLANHAT_DISCOVERY_VALIDATION_")
+    );
+
+    expect(manifest.baselineBindingCount).toBe(39);
+    expect(manifest.expectedBindingCount).toBe(46);
+    expect(manifest.bindings).toHaveLength(46);
+    expect(validationBindings.map(({ name }) => name).sort()).toEqual(
+      [...PLANHAT_DISCOVERY_VALIDATION_CONFIGURATION_NAMES].sort()
+    );
+    expect(validationBindings).toContainEqual({
+      name: "PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID",
+      type: "plain_text",
+      value: "env_819ed9c867b9be4c47e443242c47efae",
+    });
+    expect(
+      validationBindings
+        .filter(({ name }) => name !== "PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID")
+        .every(({ type, value }) => type === "secret_text" && value === undefined)
+    ).toBe(true);
+  });
+
   it("is disabled by default and rejects invalid, expired, and long-lived activation", () => {
     expect(
       readPlanhatDiscoveryValidationConfiguration(
@@ -143,6 +181,10 @@ function routeDependencies(observe: (...args: never[]) => Promise<unknown>) {
 describe("Planhat discovery validation route failures", () => {
   it.each([
     ["disabled", { ...ROUTE_ENVIRONMENT, PLANHAT_DISCOVERY_VALIDATION_ENABLED: undefined }],
+    [
+      "missing environment ID",
+      { ...ROUTE_ENVIRONMENT, PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID: undefined },
+    ],
     [
       "expired",
       {

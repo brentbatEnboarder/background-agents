@@ -119,13 +119,14 @@ async function seedSession(
 
 async function seedConnection(
   assign = true,
-  assignmentMode: "automation" | "slack-environment" = "automation"
+  assignmentMode: "automation" | "slack-environment" = "automation",
+  environmentId = ENVIRONMENT_ID
 ): Promise<void> {
   const store = new PlanhatOAuthConnectionStore(sqlDatabase(env.DB), env.TOKEN_ENCRYPTION_KEY);
   const stateHash = "d".repeat(64);
   await store.beginAuthorization({
     stateHash,
-    environmentId: ENVIRONMENT_ID,
+    environmentId,
     clientId: "integration-planhat-client",
     clientSecret: "integration-planhat-secret",
     codeVerifier: "v".repeat(64),
@@ -142,7 +143,7 @@ async function seedConnection(
   });
   if (assign) {
     const assigned = await store.setAssignment(
-      ENVIRONMENT_ID,
+      environmentId,
       true,
       assignmentMode,
       assignmentMode === "automation" ? AUTOMATION_ID : null,
@@ -692,6 +693,7 @@ describe("Planhat Conversation discovery validation gateway", () => {
 
     const otherEnvironment = "env-planhat-other";
     await seedEnvironment(otherEnvironment);
+    await seedConnection(true, "slack-environment", otherEnvironment);
     await seedSession({
       sessionId: "validation-wrong-environment",
       spawnSource: "slack-bot",
@@ -709,6 +711,7 @@ describe("Planhat Conversation discovery validation gateway", () => {
       }
     );
     expect(wrongEnvironment.status).toBe(403);
+    await expect(wrongEnvironment.json()).resolves.toMatchObject({ stage: "assignment" });
 
     const qualifying = await discoveryValidationFetch("planhat.mcp.validate-conversation-search");
     expect(qualifying.status).toBe(200);

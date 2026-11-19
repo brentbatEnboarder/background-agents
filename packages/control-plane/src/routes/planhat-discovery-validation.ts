@@ -29,6 +29,18 @@ const MAX_AUTHORIZATION_WINDOW_MS = 30 * 60 * 1000;
 const SAFE_PLANHAT_ID = /^[A-Za-z0-9][A-Za-z0-9-]{0,199}$/;
 const SAFE_ENVIRONMENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/;
 
+export const PLANHAT_DISCOVERY_VALIDATION_CONFIGURATION_NAMES = [
+  "PLANHAT_DISCOVERY_VALIDATION_ENABLED",
+  "PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT",
+  "PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID",
+  "PLANHAT_DISCOVERY_VALIDATION_SEARCH_QUERY",
+  "PLANHAT_DISCOVERY_VALIDATION_LIST_COMPANY_ID",
+  "PLANHAT_DISCOVERY_VALIDATION_GET_COMPANY_ID",
+  "PLANHAT_DISCOVERY_VALIDATION_GET_CONVERSATION_ID",
+] as const;
+type PlanhatDiscoveryValidationConfigurationName =
+  (typeof PLANHAT_DISCOVERY_VALIDATION_CONFIGURATION_NAMES)[number];
+
 const requestSchema = z
   .object({
     operation: z.enum([
@@ -48,16 +60,7 @@ export interface PlanhatDiscoveryValidationConfiguration {
 
 /** Fail-closed external activation. No default or source-controlled probe exists. */
 export function readPlanhatDiscoveryValidationConfiguration(
-  env: Pick<
-    Env,
-    | "PLANHAT_DISCOVERY_VALIDATION_ENABLED"
-    | "PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT"
-    | "PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID"
-    | "PLANHAT_DISCOVERY_VALIDATION_SEARCH_QUERY"
-    | "PLANHAT_DISCOVERY_VALIDATION_LIST_COMPANY_ID"
-    | "PLANHAT_DISCOVERY_VALIDATION_GET_COMPANY_ID"
-    | "PLANHAT_DISCOVERY_VALIDATION_GET_CONVERSATION_ID"
-  >,
+  env: Pick<Env, PlanhatDiscoveryValidationConfigurationName>,
   operation: PlanhatDiscoveryValidationOperation,
   now = Date.now()
 ): PlanhatDiscoveryValidationConfiguration | null {
