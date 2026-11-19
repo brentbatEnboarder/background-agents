@@ -13,6 +13,10 @@ import {
 import { admit, dispatch } from "../routing/admit";
 import type { ControlPlaneHonoEnv } from "../routing/hono-env";
 import type { Env } from "../types";
+import {
+  PLANHAT_DISCOVERY_VALIDATION_WINDOW_CONFIGURATION_NAMES,
+  readPlanhatDiscoveryValidationWindow,
+} from "../planhat/discovery-validation-window";
 import { authorizePlanhatGateway, authorizePlanhatSandbox } from "./planhat-gateway-authorization";
 import {
   error,
@@ -25,14 +29,10 @@ import {
 const logger = createLogger("router:planhat-discovery-validation");
 const REQUEST_MAX_BYTES = 256;
 const RESPONSE_MAX_BYTES = 256 * 1024;
-const MAX_AUTHORIZATION_WINDOW_MS = 30 * 60 * 1000;
 const SAFE_PLANHAT_ID = /^[A-Za-z0-9][A-Za-z0-9-]{0,199}$/;
-const SAFE_ENVIRONMENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/;
 
 export const PLANHAT_DISCOVERY_VALIDATION_CONFIGURATION_NAMES = [
-  "PLANHAT_DISCOVERY_VALIDATION_ENABLED",
-  "PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT",
-  "PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID",
+  ...PLANHAT_DISCOVERY_VALIDATION_WINDOW_CONFIGURATION_NAMES,
   "PLANHAT_DISCOVERY_VALIDATION_SEARCH_QUERY",
   "PLANHAT_DISCOVERY_VALIDATION_LIST_COMPANY_ID",
   "PLANHAT_DISCOVERY_VALIDATION_GET_COMPANY_ID",
@@ -48,12 +48,14 @@ const requestSchema = z
       "planhat.mcp.validate-conversation-list",
       "planhat.mcp.validate-conversation-get",
     ]),
+    windowId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/),
   })
   .strict();
 
 export interface PlanhatDiscoveryValidationConfiguration {
   operation: PlanhatDiscoveryValidationOperation;
   expiresAt: number;
+  windowId: string;
   environmentId: string;
   probe: PlanhatDiscoveryValidationProbe;
 }
@@ -64,26 +66,18 @@ export function readPlanhatDiscoveryValidationConfiguration(
   operation: PlanhatDiscoveryValidationOperation,
   now = Date.now()
 ): PlanhatDiscoveryValidationConfiguration | null {
-  if (env.PLANHAT_DISCOVERY_VALIDATION_ENABLED !== "true") return null;
-  const environmentId = env.PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID;
-  if (!environmentId || !SAFE_ENVIRONMENT_ID.test(environmentId)) return null;
-  const expiresAt = Date.parse(env.PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT ?? "");
-  if (
-    !Number.isFinite(expiresAt) ||
-    expiresAt <= now ||
-    expiresAt - now > MAX_AUTHORIZATION_WINDOW_MS
-  ) {
-    return null;
-  }
+  const window = readPlanhatDiscoveryValidationWindow(env, now);
+  if (!window) return null;
+  const { expiresAt, windowId, environmentId } = window;
   if (operation === "planhat.mcp.validate-conversation-search") {
     const searchQuery = env.PLANHAT_DISCOVERY_VALIDATION_SEARCH_QUERY;
     if (!searchQuery || searchQuery.length > 500) return null;
-    return { operation, expiresAt, environmentId, probe: { searchQuery } };
+    return { operation, expiresAt, windowId, environmentId, probe: { searchQuery } };
   }
   if (operation === "planhat.mcp.validate-conversation-list") {
     const listCompanyId = env.PLANHAT_DISCOVERY_VALIDATION_LIST_COMPANY_ID;
     if (!listCompanyId || !SAFE_PLANHAT_ID.test(listCompanyId)) return null;
-    return { operation, expiresAt, environmentId, probe: { listCompanyId } };
+    return { operation, expiresAt, windowId, environmentId, probe: { listCompanyId } };
   }
   const getCompanyId = env.PLANHAT_DISCOVERY_VALIDATION_GET_COMPANY_ID;
   const getConversationId = env.PLANHAT_DISCOVERY_VALIDATION_GET_CONVERSATION_ID;
@@ -95,7 +89,13 @@ export function readPlanhatDiscoveryValidationConfiguration(
   ) {
     return null;
   }
-  return { operation, expiresAt, environmentId, probe: { getCompanyId, getConversationId } };
+  return {
+    operation,
+    expiresAt,
+    windowId,
+    environmentId,
+    probe: { getCompanyId, getConversationId },
+  };
 }
 
 async function readRequest(request: Request): Promise<z.infer<typeof requestSchema> | Response> {
@@ -161,6 +161,9 @@ export async function handleDiscoveryValidation(
     dependencies.now()
   );
   if (!configuration) return failure(correlationId, "authorization", 403);
+  if (parsed.windowId !== configuration.windowId) {
+    return failure(correlationId, "authorization", 403);
+  }
 
   const authorized = await dependencies.authorizeGateway(
     request,

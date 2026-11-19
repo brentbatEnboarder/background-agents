@@ -44,8 +44,8 @@ describe("Planhat discovery validation route configuration", () => {
       .digest("hex");
 
     expect(manifest.baselineBindingCount).toBe(39);
-    expect(manifest.expectedBindingCount).toBe(46);
-    expect(manifest.bindings).toHaveLength(46);
+    expect(manifest.expectedBindingCount).toBe(47);
+    expect(manifest.bindings).toHaveLength(47);
     expect(baselineFingerprint).toBe(
       "f8fc3031e77dbd9fdcafd03eb5a57c889256eada0825eb7bd4e5247e7b4abdf6"
     );
@@ -78,6 +78,7 @@ describe("Planhat discovery validation route configuration", () => {
           {
             PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
             PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: expiresAt,
+            PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID: "window-invented",
             PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID: "environment-invented",
             PLANHAT_DISCOVERY_VALIDATION_SEARCH_QUERY: "invented query",
           },
@@ -91,6 +92,7 @@ describe("Planhat discovery validation route configuration", () => {
         {
           PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
           PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2026-11-19T10:30:00.000Z",
+          PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID: "window-invented",
           PLANHAT_DISCOVERY_VALIDATION_SEARCH_QUERY: "invented query",
         },
         "planhat.mcp.validate-conversation-search",
@@ -103,6 +105,7 @@ describe("Planhat discovery validation route configuration", () => {
     const base = {
       PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
       PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2026-11-19T10:30:00.000Z",
+      PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID: "window-invented",
       PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID: "environment-invented",
     };
     expect(
@@ -114,6 +117,7 @@ describe("Planhat discovery validation route configuration", () => {
     ).toEqual({
       operation: "planhat.mcp.validate-conversation-search",
       expiresAt: Date.parse("2026-11-19T10:30:00.000Z"),
+      windowId: "window-invented",
       environmentId: "environment-invented",
       probe: { searchQuery: "invented query" },
     });
@@ -126,6 +130,7 @@ describe("Planhat discovery validation route configuration", () => {
     ).toEqual({
       operation: "planhat.mcp.validate-conversation-list",
       expiresAt: Date.parse("2026-11-19T10:30:00.000Z"),
+      windowId: "window-invented",
       environmentId: "environment-invented",
       probe: { listCompanyId: "company-invented" },
     });
@@ -142,6 +147,7 @@ describe("Planhat discovery validation route configuration", () => {
     ).toEqual({
       operation: "planhat.mcp.validate-conversation-get",
       expiresAt: Date.parse("2026-11-19T10:30:00.000Z"),
+      windowId: "window-invented",
       environmentId: "environment-invented",
       probe: {
         getCompanyId: "company-invented",
@@ -159,6 +165,7 @@ describe("Planhat discovery validation route configuration", () => {
 const ROUTE_ENVIRONMENT = {
   PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
   PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2026-11-19T10:30:00.000Z",
+  PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID: "window-invented",
   PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID: "environment-invented",
   PLANHAT_DISCOVERY_VALIDATION_SEARCH_QUERY: "invented query",
 } as unknown as Env;
@@ -173,7 +180,10 @@ function routeRequest(): Request {
   return new Request("https://test.local/sessions/session-invented/validation", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Sandbox-ID": "sandbox-invented" },
-    body: JSON.stringify({ operation: "planhat.mcp.validate-conversation-search" }),
+    body: JSON.stringify({
+      operation: "planhat.mcp.validate-conversation-search",
+      windowId: "window-invented",
+    }),
   });
 }
 
@@ -195,6 +205,10 @@ describe("Planhat discovery validation route failures", () => {
   it.each([
     ["disabled", { ...ROUTE_ENVIRONMENT, PLANHAT_DISCOVERY_VALIDATION_ENABLED: undefined }],
     [
+      "missing window ID",
+      { ...ROUTE_ENVIRONMENT, PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID: undefined },
+    ],
+    [
       "missing environment ID",
       { ...ROUTE_ENVIRONMENT, PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID: undefined },
     ],
@@ -210,6 +224,28 @@ describe("Planhat discovery validation route failures", () => {
     const response = await handleDiscoveryValidation(
       routeRequest(),
       environment as Env,
+      { id: "session-invented" },
+      ROUTE_CONTEXT,
+      dependencies as never
+    );
+    expect(response.status).toBe(403);
+    expect(dependencies.authorizeGateway).not.toHaveBeenCalled();
+    expect(dependencies.observe).not.toHaveBeenCalled();
+  });
+
+  it("rejects a mismatched sandbox window before gateway authorization or provider access", async () => {
+    const dependencies = routeDependencies(vi.fn());
+    const request = new Request("https://test.local/sessions/session-invented/validation", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Sandbox-ID": "sandbox-invented" },
+      body: JSON.stringify({
+        operation: "planhat.mcp.validate-conversation-search",
+        windowId: "old-window-invented",
+      }),
+    });
+    const response = await handleDiscoveryValidation(
+      request,
+      ROUTE_ENVIRONMENT,
       { id: "session-invented" },
       ROUTE_CONTEXT,
       dependencies as never

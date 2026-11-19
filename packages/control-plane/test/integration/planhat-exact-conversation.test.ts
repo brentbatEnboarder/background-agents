@@ -208,7 +208,7 @@ function discoveryValidationFetch(
         "X-Sandbox-ID": overrides.sandboxId ?? activeSandboxId,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(overrides.body ?? { operation }),
+      body: JSON.stringify(overrides.body ?? { operation, windowId: "window-invented" }),
     }
   );
 }

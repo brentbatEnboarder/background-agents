@@ -33,6 +33,12 @@ import { buildSessionTargetSecretSources } from "./session-target-secrets";
 import type { SessionRepositoryEntry } from "./repository-target";
 import type { SessionCoreRepository } from "./session-core-repository";
 import type { SessionRow } from "./types";
+import type { Env } from "../types";
+import {
+  CS_PLANHAT_DISCOVERY_VALIDATION_WINDOW_NAMES,
+  resolvePlanhatDiscoveryValidationSandboxEnv,
+} from "../planhat/discovery-validation-window";
+import type { PLANHAT_DISCOVERY_VALIDATION_WINDOW_CONFIGURATION_NAMES } from "../planhat/discovery-validation-window";
 
 /**
  * Dependencies injected into UserEnvResolver.
@@ -50,6 +56,11 @@ export interface UserEnvResolverDeps {
   durableObjectId: string;
   repoSecretsEncryptionKey: string;
   secretsCapEnforcement: string | undefined;
+  discoveryValidationEnv: Pick<
+    Env,
+    (typeof PLANHAT_DISCOVERY_VALIDATION_WINDOW_CONFIGURATION_NAMES)[number]
+  >;
+  now?: () => number;
   /** The session-scoped logger; the composition root creates it before this class. */
   log: Logger;
 }
@@ -69,6 +80,8 @@ export class UserEnvResolver {
   private readonly repoSecretsEncryptionKey: string;
   private readonly secretsCapEnforcement: string | undefined;
   private readonly log: Logger;
+  private readonly discoveryValidationEnv: UserEnvResolverDeps["discoveryValidationEnv"];
+  private readonly now: () => number;
 
   constructor(deps: UserEnvResolverDeps) {
     this.db = deps.db;
@@ -77,6 +90,8 @@ export class UserEnvResolver {
     this.durableObjectId = deps.durableObjectId;
     this.repoSecretsEncryptionKey = deps.repoSecretsEncryptionKey;
     this.secretsCapEnforcement = deps.secretsCapEnforcement;
+    this.discoveryValidationEnv = deps.discoveryValidationEnv;
+    this.now = deps.now ?? Date.now;
     this.log = deps.log;
   }
 
@@ -211,6 +226,13 @@ export class UserEnvResolver {
       brokerSecrets: managedSecrets,
       providerAuthModes,
     });
+    for (const name of CS_PLANHAT_DISCOVERY_VALIDATION_WINDOW_NAMES) delete sandboxEnv[name];
+    const discoveryValidationEnv = resolvePlanhatDiscoveryValidationSandboxEnv(
+      this.discoveryValidationEnv,
+      session.environment_id,
+      this.now()
+    );
+    if (discoveryValidationEnv) Object.assign(sandboxEnv, discoveryValidationEnv);
     return { sandboxEnv, providerAuthModes, providerAccountIds };
   }
 

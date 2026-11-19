@@ -23,6 +23,7 @@ import type { SqlDatabase, SqlResult, SqlStatement } from "../db/sql-database";
 import type { SqlResult as StorageSqlResult, SqlStorage } from "./sql-storage";
 import type { SessionProviderAuthMode } from "@open-inspect/shared/types/provider-accounts";
 import type { SessionRepositoryRow, SessionRow } from "./types";
+import type { Env } from "../types";
 
 const ENCRYPTION_KEY = generateEncryptionKey();
 
@@ -245,6 +246,8 @@ function makeHarness(
     encryptionKey?: string;
     /** Omit to model an unset SECRETS_CAP_ENFORCEMENT (fail-closed enforce). */
     capEnforcement?: string;
+    discoveryValidationEnv?: Partial<Env>;
+    now?: () => number;
     resolveRepoId?: (session: SessionRow) => Promise<number>;
   } = {}
 ) {
@@ -275,6 +278,8 @@ function makeHarness(
     durableObjectId: "do-id-fallback",
     repoSecretsEncryptionKey: options.encryptionKey ?? ENCRYPTION_KEY,
     secretsCapEnforcement: options.capEnforcement,
+    discoveryValidationEnv: options.discoveryValidationEnv ?? {},
+    now: options.now,
     log,
   });
 
@@ -319,6 +324,74 @@ describe("UserEnvResolver", () => {
       h.db.providerAuthRows = providerAuthRows(API_KEY_MODES);
 
       await expect(h.resolver.getUserEnvVars()).resolves.toBeUndefined();
+    });
+  });
+
+  describe("operator-owned discovery validation window", () => {
+    const now = Date.parse("2026-11-19T10:00:00.000Z");
+    const validWindow = {
+      PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
+      PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2026-11-19T10:30:00.000Z",
+      PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID: "window-invented",
+      PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID: "env-alex-invented",
+    };
+
+    it("injects only the derived CS window into a fresh matching Alex sandbox", async () => {
+      const h = makeHarness({
+        session: sessionRow({ environment_id: "env-alex-invented" }),
+        discoveryValidationEnv: validWindow,
+        now: () => now,
+      });
+      h.db.providerAuthRows = providerAuthRows(API_KEY_MODES);
+      await expect(h.resolver.getUserEnvVars()).resolves.toEqual({
+        CS_PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
+        CS_PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2026-11-19T10:30:00.000Z",
+        CS_PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID: "window-invented",
+      });
+    });
+
+    it.each([
+      ["absent", {}],
+      [
+        "wrong environment",
+        { ...validWindow, PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID: "env-other" },
+      ],
+      [
+        "expired",
+        { ...validWindow, PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2026-11-19T10:00:00.000Z" },
+      ],
+      [
+        "too long",
+        { ...validWindow, PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2026-11-19T10:30:00.001Z" },
+      ],
+    ])(
+      "keeps the CS window absent when platform configuration is %s",
+      async (_name, environment) => {
+        const h = makeHarness({
+          session: sessionRow({ environment_id: "env-alex-invented" }),
+          discoveryValidationEnv: environment,
+          now: () => now,
+        });
+        h.db.providerAuthRows = providerAuthRows(API_KEY_MODES);
+        await expect(h.resolver.getUserEnvVars()).resolves.toBeUndefined();
+      }
+    );
+
+    it("strips caller-controlled CS window keys when the platform window is absent", async () => {
+      const h = makeHarness({ session: sessionRow({ environment_id: "env-alex-invented" }) });
+      h.db.providerAuthRows = providerAuthRows(API_KEY_MODES);
+      h.db.environmentSecretRowsById.set(
+        "env-alex-invented",
+        await secretRows({
+          CS_PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
+          CS_PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2099-01-01T00:00:00.000Z",
+          CS_PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID: "caller-window",
+          SAFE_UNRELATED_SECRET: "preserved",
+        })
+      );
+      await expect(h.resolver.getUserEnvVars()).resolves.toEqual({
+        SAFE_UNRELATED_SECRET: "preserved",
+      });
     });
   });
 
