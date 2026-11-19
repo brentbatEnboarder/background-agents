@@ -34,6 +34,8 @@ const spawnSourceSchema = z.enum([
  */
 const initRequestSchema = z.object({
   sessionName: z.string(),
+  /** D1 index creation instant, shared with the local row for provenance parity. */
+  createdAt: z.number().int().safe().optional(),
   repoOwner: z.string().nullable(),
   repoName: z.string().nullable(),
   repoId: z.number().nullable().optional(),
@@ -213,7 +215,7 @@ export class SessionInitHandler {
           : null,
         maxCostUsd: normalizedSandboxSettings?.maxSessionCostUsd ?? null,
         environmentId: body.environmentId ?? null,
-        createdAt: now,
+        createdAt: body.createdAt ?? now,
         updatedAt: now,
       });
 

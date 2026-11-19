@@ -422,7 +422,7 @@ export async function initNamedSession(
     updatedAt: now,
   });
 
-  return initNamedSessionDO(sessionName, doDefaults);
+  return initNamedSessionDO(sessionName, { ...doDefaults, createdAt: now });
 }
 
 /** Create only the named session DO for tests that manage the D1 row explicitly. */

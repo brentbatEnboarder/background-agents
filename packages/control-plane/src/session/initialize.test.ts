@@ -257,6 +257,7 @@ describe("initializeSession", () => {
 
     const body = (await request.json()) as Record<string, unknown>;
     expect(body.sessionName).toBe("session-123");
+    expect(body.createdAt).toBe(createMock.mock.calls[0][0].createdAt);
     expect(body.repoOwner).toBe("acme");
     expect(body.repoName).toBe("web-app");
     expect(body.repoId).toBe(42);

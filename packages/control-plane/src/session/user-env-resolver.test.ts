@@ -397,6 +397,57 @@ describe("UserEnvResolver", () => {
     });
 
     it.each([
+      [
+        "fresh index with old local",
+        Date.parse("2026-11-19T10:00:00.001Z"),
+        Date.parse("2026-11-19T09:59:59.999Z"),
+      ],
+      [
+        "old index with fresh local",
+        Date.parse("2026-11-19T09:59:59.999Z"),
+        Date.parse("2026-11-19T10:00:00.001Z"),
+      ],
+      ["missing index", null, Date.parse("2026-11-19T10:00:00.001Z")],
+      ["missing local", Date.parse("2026-11-19T10:00:00.001Z"), null],
+      ["invalid index", Number.NaN, Date.parse("2026-11-19T10:00:00.001Z")],
+      ["invalid local", Date.parse("2026-11-19T10:00:00.001Z"), Number.NaN],
+      [
+        "noncanonical offset index",
+        "2026-11-19T10:00:00.001+00:00",
+        Date.parse("2026-11-19T10:00:00.001Z"),
+      ],
+      [
+        "noncanonical offset local",
+        Date.parse("2026-11-19T10:00:00.001Z"),
+        "2026-11-19T10:00:00.001+00:00",
+      ],
+    ])(
+      "does not inject any tuple key for %s timestamp authority",
+      async (_name, indexedCreatedAt, localCreatedAt) => {
+        const h = makeHarness({
+          session: sessionRow({
+            environment_id: "env-alex-invented",
+            spawn_source: "slack-bot",
+            repo_owner: null,
+            repo_name: null,
+            repo_id: null,
+            created_at: localCreatedAt as number,
+          }),
+          indexedSession: sessionIndexRow({ created_at: indexedCreatedAt }),
+          discoveryValidationEnv: validWindow,
+          now: () => now,
+        });
+        h.db.providerAuthRows = providerAuthRows(API_KEY_MODES);
+        const result = await h.resolver.getUserEnvVars(true);
+        expect(
+          Object.keys(result ?? {}).filter((key) =>
+            key.startsWith("CS_PLANHAT_DISCOVERY_VALIDATION_")
+          )
+        ).toEqual([]);
+      }
+    );
+
+    it.each([
       ["actorless", { user_id: null }],
       ["missing actor", { user_id: undefined }],
       ["noncanonical actor", { user_id: "slack:U123" }],
@@ -404,6 +455,7 @@ describe("UserEnvResolver", () => {
       ["missing automation field", { automation_id: undefined }],
       ["pre-existing", { created_at: Date.parse("2026-11-19T09:59:59.999Z") }],
       ["boundary-equal", { created_at: Date.parse("2026-11-19T10:00:00.000Z") }],
+      ["expiry-boundary", { created_at: Date.parse("2026-11-19T10:30:00.000Z") }],
       ["clock-ahead", { created_at: now + 1 }],
       ["missing timestamp", { created_at: null }],
       ["invalid timestamp", { created_at: Number.NaN }],

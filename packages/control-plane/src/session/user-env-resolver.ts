@@ -72,6 +72,28 @@ interface UserEnvContext {
   providerAccountIds: Partial<Record<SubscriptionProviderId, string>>;
 }
 
+interface CanonicalSessionInstant {
+  epochMs: number;
+  iso: string;
+}
+
+/**
+ * Session timestamps are stored as epoch milliseconds. Project each authority
+ * through the repository's canonical ISO representation before comparing it;
+ * values with another runtime representation (including offset ISO strings)
+ * are not eligible for the validation tuple.
+ */
+function canonicalSessionInstant(value: unknown): CanonicalSessionInstant | null {
+  if (!Number.isSafeInteger(value)) return null;
+  const epochMs = value as number;
+  try {
+    const iso = new Date(epochMs).toISOString();
+    return Date.parse(iso) === epochMs ? { epochMs, iso } : null;
+  } catch {
+    return null;
+  }
+}
+
 export class UserEnvResolver {
   private readonly db: SqlDatabase;
   private readonly sessionCoreRepository: SessionCoreRepository;
@@ -237,8 +259,16 @@ export class UserEnvResolver {
       providerAuthModes,
     });
     for (const name of CS_PLANHAT_DISCOVERY_VALIDATION_WINDOW_NAMES) delete sandboxEnv[name];
+    const localCreatedAt = canonicalSessionInstant(session.created_at);
+    const indexedCreatedAt = canonicalSessionInstant(indexedSession?.createdAt);
+    const hasMatchingCreatedAt =
+      localCreatedAt !== null &&
+      indexedCreatedAt !== null &&
+      localCreatedAt.epochMs === indexedCreatedAt.epochMs &&
+      localCreatedAt.iso === indexedCreatedAt.iso;
     const discoveryValidationEnv = includeFreshValidationWindow
       ? indexedSession &&
+        hasMatchingCreatedAt &&
         indexedSession.environmentId === session.environment_id &&
         indexedSession.spawnSource === session.spawn_source &&
         indexedSession.parentSessionId === session.parent_session_id &&
@@ -258,7 +288,7 @@ export class UserEnvResolver {
               repoName: indexedSession.repoName,
               repoId: session.repo_id,
               repositoryCount,
-              createdAt: indexedSession.createdAt,
+              createdAt: indexedCreatedAt!.epochMs,
             },
             this.now()
           )

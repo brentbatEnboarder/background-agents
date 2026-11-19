@@ -961,8 +961,14 @@ describe("SandboxLifecycleManager", () => {
     it("marks a failed-session respawn as ineligible for a fresh validation window", async () => {
       const sandbox = createMockSandbox({ status: "failed", snapshot_image_id: null });
       const storage = createMockStorage(createMockSession(), sandbox);
+      storage.getUserEnvVars = vi.fn(async (includeFreshValidationWindow = false) =>
+        includeFreshValidationWindow
+          ? { CS_PLANHAT_DISCOVERY_VALIDATION_ENABLED: "must-not-reach-respawn" }
+          : undefined
+      );
+      const provider = createMockProvider();
       const manager = new SandboxLifecycleManager(
-        createMockProvider(),
+        provider,
         storage,
         storage,
         createMockBroadcaster(),
@@ -975,6 +981,9 @@ describe("SandboxLifecycleManager", () => {
       await manager.spawnSandbox();
 
       expect(storage.getUserEnvVars).toHaveBeenCalledWith(false);
+      expect(provider.createSandbox).toHaveBeenCalledWith(
+        expect.objectContaining({ userEnvVars: undefined })
+      );
     });
 
     it("spawns no-repository sessions without repo-only sandbox features", async () => {
