@@ -93,6 +93,9 @@ class FakeStatement implements SqlStatement {
     if (this.query === "SELECT * FROM sessions WHERE id = ?") {
       return Promise.resolve((this.db.sessionIndexRow as T | null) ?? null);
     }
+    if (this.query === "SELECT * FROM environments WHERE id = ?") {
+      return Promise.resolve((this.db.environmentRow as T | null) ?? null);
+    }
     if (this.query.includes("FROM model_provider_accounts")) {
       return Promise.resolve((this.db.accountRow as T | null) ?? null);
     }
@@ -120,6 +123,17 @@ class FakeSqlDatabase implements SqlDatabase {
   globalSecretRows: D1Row[] = [];
   readonly repoSecretRowsByRepoId = new Map<number, D1Row[]>();
   readonly environmentSecretRowsById = new Map<string, D1Row[]>();
+  environmentRow: D1Row | null = {
+    id: "env-alex-invented",
+    name: "Alex invented",
+    description: null,
+    prebuild_enabled: 0,
+    channel_associations: null,
+    created_at: 1,
+    updated_at: 1,
+  };
+  sessionRepositoryRows: D1Row[] = [];
+  environmentRepositoryRows: D1Row[] = [];
 
   prepare(query: string): SqlStatement {
     return new FakeStatement(this, query.replace(/\s+/g, " ").trim());
@@ -143,6 +157,16 @@ class FakeSqlDatabase implements SqlDatabase {
     }
     if (query === "SELECT key, encrypted_value FROM environment_secrets WHERE environment_id = ?") {
       return this.environmentSecretRowsById.get(bound[0] as string) ?? [];
+    }
+    if (
+      query.startsWith(
+        "SELECT position, repo_owner, repo_name, repo_id, base_branch FROM session_repositories"
+      )
+    ) {
+      return this.sessionRepositoryRows;
+    }
+    if (query.startsWith("SELECT * FROM environment_repositories")) {
+      return this.environmentRepositoryRows;
     }
     throw new Error(`Unexpected D1 query: ${query}`);
   }
@@ -282,6 +306,8 @@ function makeHarness(
     capEnforcement?: string;
     discoveryValidationEnv?: Partial<Env>;
     indexedSession?: D1Row | null;
+    indexedRepositoryRows?: D1Row[];
+    environmentRepositoryRows?: D1Row[];
     now?: () => number;
     resolveRepoId?: (session: SessionRow) => Promise<number>;
   } = {}
@@ -291,6 +317,8 @@ function makeHarness(
   const db = new FakeSqlDatabase();
   db.sessionIndexRow =
     options.indexedSession === undefined ? sessionIndexRow() : options.indexedSession;
+  db.sessionRepositoryRows = options.indexedRepositoryRows ?? [];
+  db.environmentRepositoryRows = options.environmentRepositoryRows ?? [];
   const logs: LogEntry[] = [];
   const log = recordingLogger(logs);
   const sessionCoreRepository = new SessionCoreRepository(storage.sql, (closure) => closure());
@@ -374,6 +402,72 @@ describe("UserEnvResolver", () => {
       PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID: "env-alex-invented",
     };
 
+    it("injects the derived window for an exact repository-bearing Alex environment snapshot", async () => {
+      const repository = memberRow(0, "invented", "repository", 90101);
+      const h = makeHarness({
+        session: sessionRow({
+          environment_id: "env-alex-invented",
+          spawn_source: "slack-bot",
+          repo_owner: repository.repo_owner,
+          repo_name: repository.repo_name,
+          repo_id: repository.repo_id,
+          base_branch: repository.base_branch,
+          created_at: Date.parse("2026-11-19T10:00:00.001Z"),
+        }),
+        memberRows: [repository],
+        indexedSession: sessionIndexRow({
+          repo_owner: repository.repo_owner,
+          repo_name: repository.repo_name,
+          base_branch: repository.base_branch,
+        }),
+        indexedRepositoryRows: [repository],
+        environmentRepositoryRows: [{ ...repository, environment_id: "env-alex-invented" }],
+        discoveryValidationEnv: validWindow,
+        now: () => now,
+      });
+      h.db.providerAuthRows = providerAuthRows(API_KEY_MODES);
+      await expect(h.resolver.getUserEnvVars(true)).resolves.toMatchObject({
+        CS_PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
+        CS_PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID: "window-invented",
+      });
+    });
+
+    it.each([
+      ["indexed snapshot", [memberRow(0, "invented", "different", 90101)], undefined],
+      ["environment authority", undefined, [memberRow(0, "invented", "different", 90101)]],
+    ])(
+      "rejects a repository-bearing session when the %s differs",
+      async (_name, indexed, environment) => {
+        const repository = memberRow(0, "invented", "repository", 90101);
+        const h = makeHarness({
+          session: sessionRow({
+            environment_id: "env-alex-invented",
+            spawn_source: "slack-bot",
+            repo_owner: repository.repo_owner,
+            repo_name: repository.repo_name,
+            repo_id: repository.repo_id,
+            base_branch: repository.base_branch,
+            created_at: Date.parse("2026-11-19T10:00:00.001Z"),
+          }),
+          memberRows: [repository],
+          indexedSession: sessionIndexRow({
+            repo_owner: repository.repo_owner,
+            repo_name: repository.repo_name,
+            base_branch: repository.base_branch,
+          }),
+          indexedRepositoryRows: indexed ?? [repository],
+          environmentRepositoryRows: (environment ?? [repository]).map((row) => ({
+            ...row,
+            environment_id: "env-alex-invented",
+          })),
+          discoveryValidationEnv: validWindow,
+          now: () => now,
+        });
+        h.db.providerAuthRows = providerAuthRows(API_KEY_MODES);
+        await expect(h.resolver.getUserEnvVars(true)).resolves.toBeUndefined();
+      }
+    );
+
     it("injects only the derived CS window into a fresh matching Alex sandbox", async () => {
       const h = makeHarness({
         session: sessionRow({
@@ -382,6 +476,7 @@ describe("UserEnvResolver", () => {
           repo_owner: null,
           repo_name: null,
           repo_id: null,
+          base_branch: null,
           created_at: Date.parse("2026-11-19T10:00:00.001Z"),
         }),
         discoveryValidationEnv: validWindow,

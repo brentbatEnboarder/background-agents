@@ -11,6 +11,7 @@ import { SessionIndexStore } from "../db/session-index";
 import { GlobalSecretsStore } from "../db/global-secrets";
 import { RepoSecretsStore } from "../db/repo-secrets";
 import { EnvironmentSecretsStore } from "../db/environment-secrets";
+import { EnvironmentStore, type EnvironmentRepositoryRow } from "../db/environments";
 import {
   auditSecretsMerge,
   mergeSecretSources,
@@ -75,6 +76,31 @@ interface UserEnvContext {
 interface CanonicalSessionInstant {
   epochMs: number;
   iso: string;
+}
+
+type RepositoryIdentity = Pick<
+  EnvironmentRepositoryRow,
+  "position" | "repo_owner" | "repo_name" | "repo_id" | "base_branch"
+>;
+
+function repositoryIdentitiesMatch(
+  left: readonly RepositoryIdentity[],
+  right: readonly RepositoryIdentity[]
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((repository, index) => {
+      const other = right[index];
+      return (
+        other !== undefined &&
+        repository.position === other.position &&
+        repository.repo_owner === other.repo_owner &&
+        repository.repo_name === other.repo_name &&
+        repository.repo_id === other.repo_id &&
+        repository.base_branch === other.base_branch
+      );
+    })
+  );
 }
 
 /**
@@ -191,9 +217,31 @@ export class UserEnvResolver {
     const db = this.db;
     const publicSessionId = resolvePublicSessionId(session, this.durableObjectId);
     const sessionIndex = new SessionIndexStore(db);
-    const [providerAuth, indexedSession] = await Promise.all([
+    const environmentStore = new EnvironmentStore(db);
+    const [
+      providerAuth,
+      indexedSession,
+      indexedRepositories,
+      environment,
+      environmentRepositories,
+    ] = await Promise.all([
       sessionIndex.getCompleteProviderAuth(publicSessionId),
       includeFreshValidationWindow ? sessionIndex.get(publicSessionId) : Promise.resolve(null),
+      includeFreshValidationWindow
+        ? db
+            .prepare(
+              `SELECT position, repo_owner, repo_name, repo_id, base_branch
+               FROM session_repositories WHERE session_id = ? ORDER BY position`
+            )
+            .bind(publicSessionId)
+            .all<RepositoryIdentity>()
+        : Promise.resolve({ results: [] as RepositoryIdentity[] }),
+      includeFreshValidationWindow && session.environment_id
+        ? environmentStore.getById(session.environment_id)
+        : Promise.resolve(null),
+      includeFreshValidationWindow && session.environment_id
+        ? environmentStore.getRepositoriesForEnvironment(session.environment_id)
+        : Promise.resolve([]),
     ]);
     const providerAuthModes = Object.fromEntries(
       providerAuth.map(({ provider, authMode }) => [provider, authMode])
@@ -214,9 +262,25 @@ export class UserEnvResolver {
     const repoStore = new RepoSecretsStore(db, encryptionKey);
     const environmentSecretsStore = new EnvironmentSecretsStore(db, encryptionKey);
     const members = this.sessionCoreRepository.getSessionRepositories();
+    const localRepositories = this.sessionCoreRepository.getSessionRepositoryRows();
     const repositoryCount = includeFreshValidationWindow
-      ? this.sessionCoreRepository.getSessionRepositoryRows().length
+      ? localRepositories.length
       : members.length;
+    const localPrimary = localRepositories[0];
+    const hasCanonicalLocalRepositoryMirror = localPrimary
+      ? session.repo_owner === localPrimary.repo_owner &&
+        session.repo_name === localPrimary.repo_name &&
+        session.repo_id === localPrimary.repo_id &&
+        session.base_branch === localPrimary.base_branch
+      : session.repo_owner === null &&
+        session.repo_name === null &&
+        session.repo_id === null &&
+        session.base_branch === null;
+    const hasAuthoritativeEnvironmentRepositories =
+      environment !== null &&
+      hasCanonicalLocalRepositoryMirror &&
+      repositoryIdentitiesMatch(localRepositories, indexedRepositories.results ?? []) &&
+      repositoryIdentitiesMatch(localRepositories, environmentRepositories);
     const sources = await buildSessionTargetSecretSources({
       environmentId: session.environment_id,
       globalSecrets,
@@ -274,7 +338,8 @@ export class UserEnvResolver {
         indexedSession.parentSessionId === session.parent_session_id &&
         indexedSession.spawnDepth === session.spawn_depth &&
         indexedSession.repoOwner === session.repo_owner &&
-        indexedSession.repoName === session.repo_name
+        indexedSession.repoName === session.repo_name &&
+        indexedSession.baseBranch === session.base_branch
         ? resolvePlanhatDiscoveryValidationSandboxEnv(
             this.discoveryValidationEnv,
             {
@@ -288,6 +353,7 @@ export class UserEnvResolver {
               repoName: indexedSession.repoName,
               repoId: session.repo_id,
               repositoryCount,
+              repositoriesMatchEnvironment: hasAuthoritativeEnvironmentRepositories,
               createdAt: indexedCreatedAt!.epochMs,
             },
             this.now()
