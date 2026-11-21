@@ -75,6 +75,7 @@ function fakeSqlStorage(state: { session: SessionRow | null; memberRows: Session
 }
 
 type D1Row = Record<string, unknown>;
+type D1SessionRepositoryRow = SessionRepositoryRow & D1Row;
 
 class FakeStatement implements SqlStatement {
   private bound: unknown[] = [];
@@ -283,7 +284,7 @@ function memberRow(
   repoOwner: string,
   repoName: string,
   repoId: number | null
-): SessionRepositoryRow {
+): D1SessionRepositoryRow {
   return {
     position,
     repo_owner: repoOwner,
