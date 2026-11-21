@@ -182,6 +182,7 @@ export async function initializeSession(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sessionName: input.sessionId,
+          createdAt: now,
           repoOwner: input.repoOwner,
           repoName: input.repoName,
           repoId: input.repoId,

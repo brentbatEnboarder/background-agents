@@ -44,9 +44,10 @@ export function componentsOf(instance: SessionDO): SessionRuntime["internals"] {
  * reach past SessionDO's encapsulation.
  */
 export function getUserEnvVars(
-  stub: DurableObjectStub
+  stub: DurableObjectStub,
+  includeFreshValidationWindow = false
 ): Promise<Record<string, string> | undefined> {
   return runInSessionDO(stub, (instance) =>
-    componentsOf(instance).userEnvResolver.getUserEnvVars()
+    componentsOf(instance).userEnvResolver.getUserEnvVars(includeFreshValidationWindow)
   );
 }

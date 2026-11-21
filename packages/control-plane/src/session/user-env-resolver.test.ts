@@ -23,6 +23,7 @@ import type { SqlDatabase, SqlResult, SqlStatement } from "../db/sql-database";
 import type { SqlResult as StorageSqlResult, SqlStorage } from "./sql-storage";
 import type { SessionProviderAuthMode } from "@open-inspect/shared/types/provider-accounts";
 import type { SessionRepositoryRow, SessionRow } from "./types";
+import type { Env } from "../types";
 
 const ENCRYPTION_KEY = generateEncryptionKey();
 
@@ -89,6 +90,9 @@ class FakeStatement implements SqlStatement {
   }
 
   first<T = Record<string, unknown>>(): Promise<T | null> {
+    if (this.query === "SELECT * FROM sessions WHERE id = ?") {
+      return Promise.resolve((this.db.sessionIndexRow as T | null) ?? null);
+    }
     if (this.query.includes("FROM model_provider_accounts")) {
       return Promise.resolve((this.db.accountRow as T | null) ?? null);
     }
@@ -112,6 +116,7 @@ class FakeSqlDatabase implements SqlDatabase {
   providerAuthRows: D1Row[] = [];
   /** The bound provider account the pre-spawn check reads; null means removed. */
   accountRow: D1Row | null = null;
+  sessionIndexRow: D1Row | null = null;
   globalSecretRows: D1Row[] = [];
   readonly repoSecretRowsByRepoId = new Map<number, D1Row[]>();
   readonly environmentSecretRowsById = new Map<string, D1Row[]>();
@@ -219,6 +224,36 @@ function sessionRow(overrides: Partial<SessionRow> = {}): SessionRow {
   };
 }
 
+function sessionIndexRow(overrides: D1Row = {}): D1Row {
+  return {
+    id: "sess-public-1",
+    title: null,
+    repo_owner: null,
+    repo_name: null,
+    harness: "opencode",
+    model: "anthropic/claude-sonnet-4-5",
+    reasoning_effort: null,
+    base_branch: null,
+    status: "active",
+    parent_session_id: null,
+    root_session_id: "sess-public-1",
+    spawn_source: "slack-bot",
+    spawn_depth: 0,
+    automation_id: null,
+    automation_run_id: null,
+    scm_login: null,
+    user_id: "a".repeat(32),
+    total_cost: 0,
+    active_duration_ms: 0,
+    message_count: 0,
+    pr_count: 0,
+    environment_id: "env-alex-invented",
+    created_at: Date.parse("2026-11-19T10:00:00.001Z"),
+    updated_at: Date.parse("2026-11-19T10:00:00.001Z"),
+    ...overrides,
+  };
+}
+
 function memberRow(
   position: number,
   repoOwner: string,
@@ -245,12 +280,17 @@ function makeHarness(
     encryptionKey?: string;
     /** Omit to model an unset SECRETS_CAP_ENFORCEMENT (fail-closed enforce). */
     capEnforcement?: string;
+    discoveryValidationEnv?: Partial<Env>;
+    indexedSession?: D1Row | null;
+    now?: () => number;
     resolveRepoId?: (session: SessionRow) => Promise<number>;
   } = {}
 ) {
   const session = options.session === undefined ? sessionRow() : options.session;
   const storage = fakeSqlStorage({ session, memberRows: options.memberRows ?? [] });
   const db = new FakeSqlDatabase();
+  db.sessionIndexRow =
+    options.indexedSession === undefined ? sessionIndexRow() : options.indexedSession;
   const logs: LogEntry[] = [];
   const log = recordingLogger(logs);
   const sessionCoreRepository = new SessionCoreRepository(storage.sql, (closure) => closure());
@@ -275,6 +315,8 @@ function makeHarness(
     durableObjectId: "do-id-fallback",
     repoSecretsEncryptionKey: options.encryptionKey ?? ENCRYPTION_KEY,
     secretsCapEnforcement: options.capEnforcement,
+    discoveryValidationEnv: options.discoveryValidationEnv ?? {},
+    now: options.now,
     log,
   });
 
@@ -319,6 +361,226 @@ describe("UserEnvResolver", () => {
       h.db.providerAuthRows = providerAuthRows(API_KEY_MODES);
 
       await expect(h.resolver.getUserEnvVars()).resolves.toBeUndefined();
+    });
+  });
+
+  describe("operator-owned discovery validation window", () => {
+    const now = Date.parse("2026-11-19T10:00:00.001Z");
+    const validWindow = {
+      PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
+      PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT: "2026-11-19T10:00:00.000Z",
+      PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2026-11-19T10:30:00.000Z",
+      PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID: "window-invented",
+      PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID: "env-alex-invented",
+    };
+
+    it("injects only the derived CS window into a fresh matching Alex sandbox", async () => {
+      const h = makeHarness({
+        session: sessionRow({
+          environment_id: "env-alex-invented",
+          spawn_source: "slack-bot",
+          repo_owner: null,
+          repo_name: null,
+          repo_id: null,
+          created_at: Date.parse("2026-11-19T10:00:00.001Z"),
+        }),
+        discoveryValidationEnv: validWindow,
+        now: () => now,
+      });
+      h.db.providerAuthRows = providerAuthRows(API_KEY_MODES);
+      await expect(h.resolver.getUserEnvVars(true)).resolves.toEqual({
+        CS_PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
+        CS_PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT: "2026-11-19T10:00:00.000Z",
+        CS_PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2026-11-19T10:30:00.000Z",
+        CS_PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID: "window-invented",
+      });
+    });
+
+    it.each([
+      [
+        "fresh index with old local",
+        Date.parse("2026-11-19T10:00:00.001Z"),
+        Date.parse("2026-11-19T09:59:59.999Z"),
+      ],
+      [
+        "old index with fresh local",
+        Date.parse("2026-11-19T09:59:59.999Z"),
+        Date.parse("2026-11-19T10:00:00.001Z"),
+      ],
+      ["missing index", null, Date.parse("2026-11-19T10:00:00.001Z")],
+      ["missing local", Date.parse("2026-11-19T10:00:00.001Z"), null],
+      ["invalid index", Number.NaN, Date.parse("2026-11-19T10:00:00.001Z")],
+      ["invalid local", Date.parse("2026-11-19T10:00:00.001Z"), Number.NaN],
+      [
+        "noncanonical offset index",
+        "2026-11-19T10:00:00.001+00:00",
+        Date.parse("2026-11-19T10:00:00.001Z"),
+      ],
+      [
+        "noncanonical offset local",
+        Date.parse("2026-11-19T10:00:00.001Z"),
+        "2026-11-19T10:00:00.001+00:00",
+      ],
+    ])(
+      "does not inject any tuple key for %s timestamp authority",
+      async (_name, indexedCreatedAt, localCreatedAt) => {
+        const h = makeHarness({
+          session: sessionRow({
+            environment_id: "env-alex-invented",
+            spawn_source: "slack-bot",
+            repo_owner: null,
+            repo_name: null,
+            repo_id: null,
+            created_at: localCreatedAt as number,
+          }),
+          indexedSession: sessionIndexRow({ created_at: indexedCreatedAt }),
+          discoveryValidationEnv: validWindow,
+          now: () => now,
+        });
+        h.db.providerAuthRows = providerAuthRows(API_KEY_MODES);
+        const result = await h.resolver.getUserEnvVars(true);
+        expect(
+          Object.keys(result ?? {}).filter((key) =>
+            key.startsWith("CS_PLANHAT_DISCOVERY_VALIDATION_")
+          )
+        ).toEqual([]);
+      }
+    );
+
+    it.each([
+      ["actorless", { user_id: null }],
+      ["missing actor", { user_id: undefined }],
+      ["noncanonical actor", { user_id: "slack:U123" }],
+      ["automation-linked", { automation_id: "automation-invented" }],
+      ["missing automation field", { automation_id: undefined }],
+      ["pre-existing", { created_at: Date.parse("2026-11-19T09:59:59.999Z") }],
+      ["boundary-equal", { created_at: Date.parse("2026-11-19T10:00:00.000Z") }],
+      ["expiry-boundary", { created_at: Date.parse("2026-11-19T10:30:00.000Z") }],
+      ["clock-ahead", { created_at: now + 1 }],
+      ["missing timestamp", { created_at: null }],
+      ["invalid timestamp", { created_at: Number.NaN }],
+      ["child", { parent_session_id: "parent", spawn_depth: 1 }],
+      ["web/user", { spawn_source: "user" }],
+      ["repository", { repo_owner: "invented", repo_name: "repository" }],
+      ["wrong environment", { environment_id: "env-other" }],
+    ])("does not inject any tuple key for %s session provenance", async (_name, overrides) => {
+      const indexedSession = sessionIndexRow(overrides);
+      const h = makeHarness({
+        session: sessionRow({
+          environment_id: indexedSession.environment_id as string | null,
+          spawn_source: indexedSession.spawn_source as SessionRow["spawn_source"],
+          parent_session_id: indexedSession.parent_session_id as string | null,
+          spawn_depth: indexedSession.spawn_depth as number,
+          repo_owner: indexedSession.repo_owner as string | null,
+          repo_name: indexedSession.repo_name as string | null,
+          repo_id: null,
+          created_at: indexedSession.created_at as number,
+        }),
+        indexedSession,
+        discoveryValidationEnv: validWindow,
+        now: () => now,
+      });
+      h.db.providerAuthRows = providerAuthRows(API_KEY_MODES);
+      await expect(h.resolver.getUserEnvVars(true)).resolves.toBeUndefined();
+    });
+
+    it.each([
+      ["missing indexed session", null, {}],
+      ["ambiguous environment", sessionIndexRow(), { environment_id: "env-other" }],
+      ["ambiguous spawn source", sessionIndexRow(), { spawn_source: "user" as const }],
+      ["ambiguous parent", sessionIndexRow(), { parent_session_id: "other-parent" }],
+      ["ambiguous depth", sessionIndexRow(), { spawn_depth: 1 }],
+      ["ambiguous repository", sessionIndexRow(), { repo_owner: "other", repo_name: "repo" }],
+      ["repository id", sessionIndexRow(), { repo_id: 90101 }],
+      ["repository member", sessionIndexRow(), {}],
+    ])(
+      "does not inject any tuple key for %s provenance",
+      async (name, indexedSession, localOverrides) => {
+        const h = makeHarness({
+          session: sessionRow({
+            environment_id: "env-alex-invented",
+            spawn_source: "slack-bot",
+            repo_owner: null,
+            repo_name: null,
+            repo_id: null,
+            created_at: now,
+            ...localOverrides,
+          }),
+          memberRows:
+            name === "repository member" ? [memberRow(0, "invented", "repository", 90101)] : [],
+          indexedSession,
+          discoveryValidationEnv: validWindow,
+          now: () => now,
+        });
+        h.db.providerAuthRows = providerAuthRows(API_KEY_MODES);
+        const result = await h.resolver.getUserEnvVars(true);
+        expect(
+          Object.keys(result ?? {}).filter((key) =>
+            key.startsWith("CS_PLANHAT_DISCOVERY_VALIDATION_")
+          )
+        ).toEqual([]);
+      }
+    );
+
+    it("does not inject the window into restore/resume env resolution", async () => {
+      const h = makeHarness({
+        session: sessionRow({
+          environment_id: "env-alex-invented",
+          spawn_source: "slack-bot",
+          repo_owner: null,
+          repo_name: null,
+          repo_id: null,
+          created_at: Date.parse("2026-11-19T10:00:00.001Z"),
+        }),
+        discoveryValidationEnv: validWindow,
+        now: () => now,
+      });
+      h.db.providerAuthRows = providerAuthRows(API_KEY_MODES);
+      await expect(h.resolver.getUserEnvVars()).resolves.toBeUndefined();
+    });
+
+    it.each([
+      ["absent", {}],
+      [
+        "wrong environment",
+        { ...validWindow, PLANHAT_DISCOVERY_VALIDATION_ENVIRONMENT_ID: "env-other" },
+      ],
+      [
+        "expired",
+        { ...validWindow, PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2026-11-19T10:00:00.000Z" },
+      ],
+      [
+        "too long",
+        { ...validWindow, PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2026-11-19T10:30:00.001Z" },
+      ],
+    ])(
+      "keeps the CS window absent when platform configuration is %s",
+      async (_name, environment) => {
+        const h = makeHarness({
+          session: sessionRow({ environment_id: "env-alex-invented" }),
+          discoveryValidationEnv: environment,
+          now: () => now,
+        });
+        h.db.providerAuthRows = providerAuthRows(API_KEY_MODES);
+        await expect(h.resolver.getUserEnvVars()).resolves.toBeUndefined();
+      }
+    );
+
+    it("strips caller-controlled CS window keys when the platform window is absent", async () => {
+      const h = makeHarness({ session: sessionRow({ environment_id: "env-alex-invented" }) });
+      h.db.providerAuthRows = providerAuthRows(API_KEY_MODES);
+      h.db.environmentSecretRowsById.set(
+        "env-alex-invented",
+        await secretRows({
+          CS_PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
+          CS_PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2099-01-01T00:00:00.000Z",
+          CS_PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID: "caller-window",
+          SAFE_UNRELATED_SECRET: "preserved",
+        })
+      );
+      await expect(h.resolver.getUserEnvVars()).resolves.toEqual({
+        SAFE_UNRELATED_SECRET: "preserved",
+      });
     });
   });
 

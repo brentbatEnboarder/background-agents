@@ -37,8 +37,10 @@ export class LifecycleSessionContext implements SessionContextReader {
     }));
   }
 
-  getUserEnvVars(): Promise<Record<string, string> | undefined> {
-    return this.userEnv.getUserEnvVars();
+  getUserEnvVars(
+    includeFreshValidationWindow = false
+  ): Promise<Record<string, string> | undefined> {
+    return this.userEnv.getUserEnvVars(includeFreshValidationWindow);
   }
 }
 
