@@ -44,6 +44,7 @@ export interface PlanhatDiscoveryValidationSessionProvenance {
   repoName: string | null;
   repoId: number | null;
   repositoryCount: number;
+  repositoriesMatchEnvironment: boolean;
   createdAt: number;
 }
 
@@ -105,10 +106,7 @@ export function resolvePlanhatDiscoveryValidationSandboxEnv(
     session.automationId !== null ||
     session.parentSessionId !== null ||
     session.spawnDepth !== 0 ||
-    session.repoOwner !== null ||
-    session.repoName !== null ||
-    session.repoId !== null ||
-    session.repositoryCount !== 0 ||
+    !session.repositoriesMatchEnvironment ||
     !Number.isSafeInteger(session.createdAt) ||
     session.createdAt <= window.issuedAt ||
     session.createdAt > now ||
