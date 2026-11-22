@@ -7,9 +7,9 @@
  * - list:   `list_model_records {MODEL:"Conversation", FILTERS:{companyId}, LIMIT:20}`.
  * Exact-get remains `getExactPlanhatConversation`.
  *
- * Projection limitation: #246 recorded no search/list response field names beyond Conversation
- * identity, so each candidate carries only `{companyId, conversationId}` taken from `companyId` and
- * `_id`. Every other provider field is dropped here and never forwarded. Type, date, subject and
+ * Projection limitation: each candidate carries only `{companyId, conversationId}` taken from
+ * `companyId` and `_id`. Live search hits (#254) were observed as `{_id, type, subject, snippet, model}`
+ * with no `companyId`; such a search candidate has `companyId: null`. List records always carry it. Every other provider field is dropped here and never forwarded. Type, date, subject and
  * participants must be filled by the application through exact-get or its approved REST read until a
  * reviewed observation adds them to `PLANHAT_DISCOVERY_CANDIDATE_FIELDS`.
  */
@@ -96,7 +96,8 @@ function shapeOf(value: unknown): string {
 }
 
 export interface PlanhatConversationCandidate {
-  companyId: string;
+  /** Null only for a search hit the provider returned without a Company identity (#254). */
+  companyId: string | null;
   conversationId: string;
 }
 
@@ -258,37 +259,63 @@ function recordArray(payload: unknown, responseBytes: number): unknown[] {
   fail("parse", "malformed", undefined, responseBytes, shapeOf(payload));
 }
 
+function isConversationModel(value: unknown): boolean {
+  return (
+    value === undefined || (typeof value === "string" && value.toLowerCase() === "conversation")
+  );
+}
+
+/**
+ * Search (`requiredCompanyId === null`): live #254 ranked hits carry `_id` and `model` but no
+ * `companyId`, so a hit may be identity-unknown (`companyId: null`) and the application resolves its
+ * Company through its approved single-Conversation read. A present `companyId` must still be safe, and
+ * a hit whose `model` is not Conversation is skipped rather than guessed at.
+ * List: every record must carry a safe `companyId` equal to the requested Company.
+ */
 function projectCandidates(
   payload: unknown,
   requiredCompanyId: string | null,
   responseBytes: number
 ): PlanhatConversationDiscoveryResult {
   const records = recordArray(payload, responseBytes);
-  const companyByConversation = new Map<string, string>();
+  const search = requiredCompanyId === null;
+  const candidateByConversation = new Map<string, PlanhatConversationCandidate>();
+  const companyByConversation = new Map<string, string | null>();
   const candidates: PlanhatConversationCandidate[] = [];
   for (const source of records) {
+    const companyPresent = isObject(source) && source.companyId !== undefined;
     if (
       !isObject(source) ||
       typeof source._id !== "string" ||
-      typeof source.companyId !== "string" ||
       !SAFE_PLANHAT_ID.test(source._id) ||
-      !SAFE_PLANHAT_ID.test(source.companyId)
+      ((!search || companyPresent) &&
+        (typeof source.companyId !== "string" || !SAFE_PLANHAT_ID.test(source.companyId)))
     ) {
       fail("parse", "malformed", undefined, responseBytes, `record:${shapeOf(source)}`);
     }
+    if (search && !isConversationModel(source.model)) continue;
     const conversationId = source._id;
-    const companyId = source.companyId;
+    const companyId = companyPresent ? (source.companyId as string) : null;
     if (requiredCompanyId !== null && companyId !== requiredCompanyId) {
       fail("identity", "mismatch", undefined, responseBytes);
     }
-    const seenCompany = companyByConversation.get(conversationId);
-    if (seenCompany !== undefined) {
-      if (seenCompany !== companyId) fail("identity", "mismatch", undefined, responseBytes);
+    if (companyByConversation.has(conversationId)) {
+      const seenCompany = companyByConversation.get(conversationId) ?? null;
+      if (seenCompany !== null && companyId !== null && seenCompany !== companyId) {
+        fail("identity", "mismatch", undefined, responseBytes);
+      }
+      if (seenCompany === null && companyId !== null) {
+        companyByConversation.set(conversationId, companyId);
+        const candidate = candidateByConversation.get(conversationId);
+        if (candidate) candidate.companyId = companyId;
+      }
       continue;
     }
     companyByConversation.set(conversationId, companyId);
     if (candidates.length < PLANHAT_DISCOVERY_CANDIDATE_LIMIT) {
-      candidates.push({ companyId, conversationId });
+      const candidate = { companyId, conversationId };
+      candidates.push(candidate);
+      candidateByConversation.set(conversationId, candidate);
     }
   }
   return { candidates, providerCount: records.length, responseBytes };

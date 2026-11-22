@@ -104,6 +104,37 @@ describe("Planhat Conversation discovery route", () => {
     expect(JSON.stringify(body)).not.toContain("invented-access-token");
   });
 
+  it("returns identity-unknown search candidates as companyId null and nothing else (#254)", async () => {
+    const deps = dependencies();
+    deps.search.mockResolvedValueOnce({
+      candidates: [
+        { companyId: null, conversationId: "conversation-a" },
+        { companyId: "company-b", conversationId: "conversation-b" },
+      ] as never,
+      providerCount: 2,
+      responseBytes: 300,
+    });
+    const { response, body } = await handle(SEARCH, ENABLED, deps);
+    expect(response.status).toBe(200);
+    expect(body.candidates).toEqual([
+      { companyId: null, conversationId: "conversation-a" },
+      { companyId: "company-b", conversationId: "conversation-b" },
+    ]);
+    expect(body.returnedCount).toBe(2);
+  });
+
+  it("fails closed if a list result ever carries a candidate outside the requested Company", async () => {
+    const deps = dependencies();
+    deps.list.mockResolvedValueOnce({
+      candidates: [{ companyId: null, conversationId: "conversation-a" }] as never,
+      providerCount: 1,
+      responseBytes: 100,
+    });
+    const { response, body } = await handle(LIST, ENABLED, deps);
+    expect(response.status).toBe(502);
+    expect(body).not.toHaveProperty("candidates");
+  });
+
   it("returns a Company list and marks a full page as possibly truncated", async () => {
     const { response, deps, body } = await handle(LIST);
     expect(response.status).toBe(200);

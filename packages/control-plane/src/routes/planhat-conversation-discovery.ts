@@ -103,7 +103,8 @@ const DEFAULT_DEPENDENCIES: ConversationDiscoveryDependencies = {
 };
 
 /**
- * Envelope evidence for application validation. `truncated` means the provider returned at least
+ * Envelope evidence for application validation. A search candidate's `companyId` is null when the
+ * provider's ranked hit carried no Company identity (#254); list candidates always equal the request. `truncated` means the provider returned at least
  * `candidateLimit` records, so more matching Conversations may exist than were returned.
  */
 function envelope(
@@ -115,7 +116,14 @@ function envelope(
   if (
     !Number.isSafeInteger(result.providerCount) ||
     result.providerCount < result.candidates.length ||
-    result.candidates.length > PLANHAT_DISCOVERY_CANDIDATE_LIMIT
+    result.candidates.length > PLANHAT_DISCOVERY_CANDIDATE_LIMIT ||
+    !result.candidates.every(
+      ({ companyId, conversationId }) =>
+        SAFE_PLANHAT_ID.test(conversationId) &&
+        (parsed.operation === PLANHAT_DISCOVERY_LIST_OPERATION
+          ? companyId === parsed.companyId
+          : companyId === null || SAFE_PLANHAT_ID.test(companyId))
+    )
   ) {
     throw new PlanhatConversationDiscoveryTransportError("parse", "malformed");
   }
