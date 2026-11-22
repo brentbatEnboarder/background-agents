@@ -34,6 +34,7 @@ export interface PlanhatDiscoveryValidationWindow {
 }
 
 export interface PlanhatDiscoveryValidationSessionProvenance {
+  sessionId?: string;
   environmentId: string | null;
   spawnSource: string;
   userId: string | null | undefined;
@@ -46,6 +47,19 @@ export interface PlanhatDiscoveryValidationSessionProvenance {
   repositoryCount: number;
   repositoriesMatchEnvironment: boolean;
   createdAt: number;
+}
+
+export interface PlanhatDiscoveryValidationDecisionTrace {
+  correlationId: string;
+  boundary: "sandbox-validation-contract";
+  decision: "attached" | "withheld";
+  firstFailedPredicate: string | null;
+  facts: readonly Readonly<{
+    predicate: string;
+    expected: unknown;
+    observed: unknown;
+    passed: boolean;
+  }>[];
 }
 
 function canonicalInstant(value: string | undefined): number | null {
@@ -95,23 +109,93 @@ export function readPlanhatDiscoveryValidationWindow(
 export function resolvePlanhatDiscoveryValidationSandboxEnv(
   env: Pick<Env, WindowConfigurationName>,
   session: PlanhatDiscoveryValidationSessionProvenance,
-  now = Date.now()
+  now = Date.now(),
+  trace?: (decision: PlanhatDiscoveryValidationDecisionTrace) => void
 ): Record<(typeof CS_PLANHAT_DISCOVERY_VALIDATION_WINDOW_NAMES)[number], string> | null {
   const window = readPlanhatDiscoveryValidationWindow(env, now);
-  if (
-    !window ||
-    session.environmentId !== window.environmentId ||
-    session.spawnSource !== "slack-bot" ||
-    !isCanonicalUserId(session.userId) ||
-    session.automationId !== null ||
-    session.parentSessionId !== null ||
-    session.spawnDepth !== 0 ||
-    !session.repositoriesMatchEnvironment ||
-    !Number.isSafeInteger(session.createdAt) ||
-    session.createdAt <= window.issuedAt ||
-    session.createdAt > now ||
-    session.createdAt >= window.expiresAt
-  ) {
+  const facts = [
+    {
+      predicate: "window.current",
+      expected: true,
+      observed: window !== null,
+      passed: window !== null,
+    },
+    {
+      predicate: "environment.id",
+      expected: window?.environmentId ?? null,
+      observed: session.environmentId,
+      passed: window !== null && session.environmentId === window.environmentId,
+    },
+    {
+      predicate: "session.spawnSource",
+      expected: "slack-bot",
+      observed: session.spawnSource,
+      passed: session.spawnSource === "slack-bot",
+    },
+    {
+      predicate: "session.userIdCanonical",
+      expected: true,
+      observed: isCanonicalUserId(session.userId),
+      passed: isCanonicalUserId(session.userId),
+    },
+    {
+      predicate: "session.automationId",
+      expected: null,
+      observed: session.automationId,
+      passed: session.automationId === null,
+    },
+    {
+      predicate: "session.parentSessionId",
+      expected: null,
+      observed: session.parentSessionId,
+      passed: session.parentSessionId === null,
+    },
+    {
+      predicate: "session.spawnDepth",
+      expected: 0,
+      observed: session.spawnDepth,
+      passed: session.spawnDepth === 0,
+    },
+    {
+      predicate: "repository.authorityParity",
+      expected: true,
+      observed: session.repositoriesMatchEnvironment,
+      passed: session.repositoriesMatchEnvironment,
+    },
+    {
+      predicate: "session.createdAtInteger",
+      expected: true,
+      observed: Number.isSafeInteger(session.createdAt),
+      passed: Number.isSafeInteger(session.createdAt),
+    },
+    {
+      predicate: "session.createdAfterWindowIssued",
+      expected: window?.issuedAt ?? null,
+      observed: session.createdAt,
+      passed: window !== null && session.createdAt > window.issuedAt,
+    },
+    {
+      predicate: "session.createdNotInFuture",
+      expected: now,
+      observed: session.createdAt,
+      passed: session.createdAt <= now,
+    },
+    {
+      predicate: "session.createdBeforeWindowExpiry",
+      expected: window?.expiresAt ?? null,
+      observed: session.createdAt,
+      passed: window !== null && session.createdAt < window.expiresAt,
+    },
+  ] as const;
+  const firstFailedPredicate = facts.find((fact) => !fact.passed)?.predicate ?? null;
+  trace?.({
+    correlationId: `planhat-discovery:${window?.windowId ?? "no-window"}:${session.sessionId ?? "unknown-session"}`,
+    boundary: "sandbox-validation-contract",
+    decision: firstFailedPredicate === null ? "attached" : "withheld",
+    firstFailedPredicate,
+    facts,
+  });
+  if (!window || firstFailedPredicate !== null) {
     return null;
   }
   return {

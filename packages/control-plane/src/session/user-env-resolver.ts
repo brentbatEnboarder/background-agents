@@ -330,33 +330,104 @@ export class UserEnvResolver {
       indexedCreatedAt !== null &&
       localCreatedAt.epochMs === indexedCreatedAt.epochMs &&
       localCreatedAt.iso === indexedCreatedAt.iso;
+    const resolverFacts = [
+      {
+        predicate: "resolver.freshWindowRequested",
+        expected: true,
+        observed: includeFreshValidationWindow,
+        passed: includeFreshValidationWindow,
+      },
+      {
+        predicate: "resolver.indexedSessionPresent",
+        expected: true,
+        observed: indexedSession !== null,
+        passed: indexedSession !== null,
+      },
+      {
+        predicate: "resolver.createdAtParity",
+        expected: true,
+        observed: hasMatchingCreatedAt,
+        passed: hasMatchingCreatedAt,
+      },
+      {
+        predicate: "resolver.environmentIdParity",
+        expected: session.environment_id,
+        observed: indexedSession?.environmentId ?? null,
+        passed: indexedSession?.environmentId === session.environment_id,
+      },
+      {
+        predicate: "resolver.spawnSourceParity",
+        expected: session.spawn_source,
+        observed: indexedSession?.spawnSource ?? null,
+        passed: indexedSession?.spawnSource === session.spawn_source,
+      },
+      {
+        predicate: "resolver.parentSessionParity",
+        expected: session.parent_session_id,
+        observed: indexedSession?.parentSessionId ?? null,
+        passed: indexedSession?.parentSessionId === session.parent_session_id,
+      },
+      {
+        predicate: "resolver.spawnDepthParity",
+        expected: session.spawn_depth,
+        observed: indexedSession?.spawnDepth ?? null,
+        passed: indexedSession?.spawnDepth === session.spawn_depth,
+      },
+      {
+        predicate: "resolver.primaryOwnerParity",
+        expected: session.repo_owner,
+        observed: indexedSession?.repoOwner ?? null,
+        passed: indexedSession?.repoOwner === session.repo_owner,
+      },
+      {
+        predicate: "resolver.primaryNameParity",
+        expected: session.repo_name,
+        observed: indexedSession?.repoName ?? null,
+        passed: indexedSession?.repoName === session.repo_name,
+      },
+      {
+        predicate: "resolver.primaryBranchParity",
+        expected: session.base_branch,
+        observed: indexedSession?.baseBranch ?? null,
+        passed: indexedSession?.baseBranch === session.base_branch,
+      },
+    ];
+    const resolverFirstFailure = resolverFacts.find((fact) => !fact.passed)?.predicate ?? null;
+    if (includeFreshValidationWindow && resolverFirstFailure !== null) {
+      this.log.info("Planhat discovery validation resolver contract evaluated", {
+        event: "planhat.discovery_validation.resolver_contract",
+        correlationId: `planhat-discovery:${this.discoveryValidationEnv.PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID ?? "no-window"}:${publicSessionId}`,
+        boundary: "user-env-resolver",
+        decision: "withheld",
+        firstFailedPredicate: resolverFirstFailure,
+        facts: resolverFacts,
+      });
+    }
     const discoveryValidationEnv = includeFreshValidationWindow
-      ? indexedSession &&
-        hasMatchingCreatedAt &&
-        indexedSession.environmentId === session.environment_id &&
-        indexedSession.spawnSource === session.spawn_source &&
-        indexedSession.parentSessionId === session.parent_session_id &&
-        indexedSession.spawnDepth === session.spawn_depth &&
-        indexedSession.repoOwner === session.repo_owner &&
-        indexedSession.repoName === session.repo_name &&
-        indexedSession.baseBranch === session.base_branch
+      ? indexedSession && resolverFirstFailure === null
         ? resolvePlanhatDiscoveryValidationSandboxEnv(
             this.discoveryValidationEnv,
             {
-              environmentId: indexedSession.environmentId,
-              spawnSource: indexedSession.spawnSource,
+              sessionId: publicSessionId,
+              environmentId: session.environment_id,
+              spawnSource: session.spawn_source,
               userId: indexedSession.userId,
-              automationId: indexedSession.automationId,
-              parentSessionId: indexedSession.parentSessionId,
-              spawnDepth: indexedSession.spawnDepth,
-              repoOwner: indexedSession.repoOwner,
-              repoName: indexedSession.repoName,
+              automationId: indexedSession.automationId ?? null,
+              parentSessionId: session.parent_session_id,
+              spawnDepth: session.spawn_depth,
+              repoOwner: session.repo_owner,
+              repoName: session.repo_name,
               repoId: session.repo_id,
               repositoryCount,
               repositoriesMatchEnvironment: hasAuthoritativeEnvironmentRepositories,
               createdAt: indexedCreatedAt!.epochMs,
             },
-            this.now()
+            this.now(),
+            (decision) =>
+              this.log.info("Planhat discovery validation sandbox contract evaluated", {
+                event: "planhat.discovery_validation.sandbox_contract",
+                ...decision,
+              })
           )
         : null
       : null;
