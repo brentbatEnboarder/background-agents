@@ -97,6 +97,9 @@ async function seedSession(
   } = {}
 ): Promise<DurableObjectStub> {
   const sessionId = input.sessionId ?? activeSessionId;
+  const repoOwner = input.repoOwner ?? null;
+  const repoName = input.repoName ?? null;
+  const repoId = repoOwner && repoName ? (input.repoId ?? 12345) : null;
   const now =
     input.createdAt ??
     Math.max(Date.now(), Date.parse(env.PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT ?? "") + 1);
@@ -105,11 +108,11 @@ async function seedSession(
   await new SessionIndexStore(sqlDatabase(env.DB)).create({
     id: sessionId,
     title: "Invented Alex session",
-    repoOwner: input.repoOwner ?? null,
-    repoName: input.repoName ?? null,
+    repoOwner,
+    repoName,
     model: "anthropic/claude-haiku-4-5",
     reasoningEffort: null,
-    baseBranch: null,
+    baseBranch: repoOwner && repoName ? "main" : null,
     status: "created",
     parentSessionId: input.parentSessionId ?? null,
     spawnSource: input.spawnSource ?? "automation",
@@ -123,15 +126,17 @@ async function seedSession(
     userId: input.userId ?? null,
     environmentId: input.environmentId ?? ENVIRONMENT_ID,
     providerAuth: TEST_SESSION_PROVIDER_AUTH,
+    repositories:
+      repoOwner && repoName ? [{ repoOwner, repoName, repoId: repoId!, baseBranch: "main" }] : [],
     createdAt: indexedCreatedAt,
     updatedAt: indexedCreatedAt,
   });
   const { stub } = await initNamedSessionDO(sessionId, {
     environmentId: input.environmentId ?? ENVIRONMENT_ID,
-    repoOwner: input.repoOwner ?? null,
-    repoName: input.repoName ?? null,
-    repoId: input.repoOwner && input.repoName ? (input.repoId ?? 12345) : null,
-    defaultBranch: input.repoOwner && input.repoName ? "main" : null,
+    repoOwner,
+    repoName,
+    repoId,
+    defaultBranch: repoOwner && repoName ? "main" : null,
     spawnSource: input.spawnSource ?? "automation",
     parentSessionId: input.parentSessionId ?? null,
     spawnDepth: input.spawnDepth ?? 0,
@@ -143,6 +148,20 @@ async function seedSession(
     sandboxId: input.sandboxId ?? activeSandboxId,
   });
   return stub;
+}
+
+async function seedEnvironmentRepository(
+  repoOwner: string,
+  repoName: string,
+  repoId: number
+): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO environment_repositories
+     (environment_id, position, repo_owner, repo_name, repo_id, base_branch)
+     VALUES (?, 0, ?, ?, ?, 'main')`
+  )
+    .bind(ENVIRONMENT_ID, repoOwner, repoName, repoId)
+    .run();
 }
 
 async function replaceLocalSessionCreatedAt(
@@ -533,6 +552,31 @@ describe("Planhat Conversation discovery validation gateway", () => {
     await seedAutomation();
     await seedSession({ spawnSource: "slack-bot", userId: USER_ID });
     await seedConnection(true, "slack-environment");
+  });
+
+  it("admits the exact environment-authorized repository identity", async () => {
+    const sessionId = "validation-authorized-repository";
+    const sandboxId = "sandbox-validation-authorized-repository";
+    const sandboxToken = "token-validation-authorized-repository";
+    await seedEnvironmentRepository("invented", "customer-success-agents", 12345);
+    await seedSession({
+      sessionId,
+      sandboxId,
+      sandboxToken,
+      spawnSource: "slack-bot",
+      userId: USER_ID,
+      repoOwner: "invented",
+      repoName: "customer-success-agents",
+      repoId: 12345,
+    });
+
+    const response = await discoveryValidationFetch("planhat.mcp.validate-conversation-search", {
+      sessionId,
+      sandboxId,
+      sandboxToken,
+    });
+
+    expect(response.status).toBe(200);
   });
 
   it.each([
