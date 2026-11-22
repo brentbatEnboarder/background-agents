@@ -429,7 +429,27 @@ describe("UserEnvResolver", () => {
       h.db.providerAuthRows = providerAuthRows(API_KEY_MODES);
       await expect(h.resolver.getUserEnvVars(true)).resolves.toMatchObject({
         CS_PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
+        CS_PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT: "2026-11-19T10:00:00.000Z",
+        CS_PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: "2026-11-19T10:30:00.000Z",
         CS_PLANHAT_DISCOVERY_VALIDATION_WINDOW_ID: "window-invented",
+      });
+      expect(h.logs).toContainEqual({
+        level: "info",
+        msg: "Planhat discovery validation sandbox contract evaluated",
+        data: expect.objectContaining({
+          correlationId: "planhat-discovery:window-invented:sess-public-1",
+          boundary: "sandbox-validation-contract",
+          decision: "attached",
+          firstFailedPredicate: null,
+          facts: expect.arrayContaining([
+            expect.objectContaining({
+              predicate: "repository.authorityParity",
+              expected: true,
+              observed: true,
+              passed: true,
+            }),
+          ]),
+        }),
       });
     });
 
