@@ -45,10 +45,54 @@ export class PlanhatConversationDiscoveryTransportError extends Error {
     public readonly stage: FailureStage,
     public readonly outcome: FailureOutcome,
     public readonly statusClass?: string,
-    public readonly responseBytes?: number
+    public readonly responseBytes?: number,
+    /** Text-free structure of an unparseable provider reply: field names and value types only (#254). */
+    public readonly responseShape?: string
   ) {
     super("Planhat Conversation discovery unavailable");
   }
+}
+
+const SHAPE_KEY = /^[A-Za-z_$][A-Za-z0-9_$.-]{0,39}$/;
+const SHAPE_MAX_LENGTH = 1500;
+
+/**
+ * Describes a JSON value's structure without any of its values: object keys (only when they look
+ * like field names), value types, array lengths and the shape of the first element. Strings are
+ * reported as `string(<length>)`; a tool's `text` content is reported as JSON shape or `non-json`.
+ */
+export function describeResponseShape(value: unknown, depth = 0): string {
+  if (value === null) return "null";
+  if (typeof value === "string") return `string(${value.length})`;
+  if (typeof value !== "object") return typeof value;
+  if (depth >= 5) return Array.isArray(value) ? `array(${value.length})` : "object";
+  if (Array.isArray(value)) {
+    return value.length === 0
+      ? "array(0)"
+      : `array(${value.length})<${describeResponseShape(value[0], depth + 1)}>`;
+  }
+  const entries = Object.entries(value).slice(0, 30);
+  const fields = entries.map(([key, field]) => {
+    const name = SHAPE_KEY.test(key) ? key : "?";
+    if (key === "text" && typeof field === "string")
+      return `${name}:${describeText(field, depth + 1)}`;
+    return `${name}:${describeResponseShape(field, depth + 1)}`;
+  });
+  const more = Object.keys(value).length > entries.length ? ",…" : "";
+  return `{${fields.join(",")}${more}}`;
+}
+
+function describeText(text: string, depth: number): string {
+  try {
+    return `json-text<${describeResponseShape(JSON.parse(text) as unknown, depth)}>`;
+  } catch {
+    return `non-json-text(${text.length})`;
+  }
+}
+
+function shapeOf(value: unknown): string {
+  const shape = describeResponseShape(value);
+  return shape.length > SHAPE_MAX_LENGTH ? `${shape.slice(0, SHAPE_MAX_LENGTH)}…` : shape;
 }
 
 export interface PlanhatConversationCandidate {
@@ -74,9 +118,16 @@ function fail(
   stage: FailureStage,
   outcome: FailureOutcome,
   statusClass?: string,
-  responseBytes?: number
+  responseBytes?: number,
+  responseShape?: string
 ): never {
-  throw new PlanhatConversationDiscoveryTransportError(stage, outcome, statusClass, responseBytes);
+  throw new PlanhatConversationDiscoveryTransportError(
+    stage,
+    outcome,
+    statusClass,
+    responseBytes,
+    responseShape
+  );
 }
 
 function headers(accessToken: string, sessionId: string | null): Record<string, string> {
@@ -145,22 +196,25 @@ function parseJsonRpc(
   responseBytes: number
 ): JsonRpcResponse {
   let encoded = body;
+  let framing = "json";
   if (contentType?.toLowerCase().includes("text/event-stream")) {
     const data = body
       .split(/\r?\n/)
       .filter((line) => line.startsWith("data:"))
       .map((line) => line.slice(5).trim());
     encoded = data.at(-1) ?? "";
+    framing = `event-stream(data-lines:${data.length})`;
   } else if (!contentType?.toLowerCase().includes("application/json")) {
-    fail(stage, "malformed", undefined, responseBytes);
+    const mediaType = /^[a-z]+\/[a-z0-9.+-]+/.exec(contentType?.toLowerCase() ?? "")?.[0] ?? "none";
+    fail(stage, "malformed", undefined, responseBytes, `content-type:${mediaType}`);
   }
   let value: unknown;
   try {
     value = JSON.parse(encoded);
   } catch {
-    fail(stage, "malformed", undefined, responseBytes);
+    fail(stage, "malformed", undefined, responseBytes, `${framing}:non-json(${encoded.length})`);
   }
-  if (!isObject(value)) fail(stage, "malformed", undefined, responseBytes);
+  if (!isObject(value)) fail(stage, "malformed", undefined, responseBytes, shapeOf(value));
   const message = value as unknown as JsonRpcResponse;
   if (
     message.jsonrpc !== "2.0" ||
@@ -168,24 +222,24 @@ function parseJsonRpc(
     message.error !== undefined ||
     message.result === undefined
   ) {
-    fail(stage, "malformed", undefined, responseBytes);
+    fail(stage, "malformed", undefined, responseBytes, shapeOf(value));
   }
   return message;
 }
 
 function toolPayload(result: unknown, responseBytes: number): unknown {
-  if (!isObject(result)) fail("parse", "malformed", undefined, responseBytes);
+  if (!isObject(result)) fail("parse", "malformed", undefined, responseBytes, shapeOf(result));
   if (result.isError === true) fail("read", "provider", undefined, responseBytes);
   if (result.structuredContent !== undefined) return result.structuredContent;
   const content = Array.isArray(result.content) ? result.content : [];
   const only = content.length === 1 ? content[0] : undefined;
   if (!isObject(only) || only.type !== "text" || typeof only.text !== "string") {
-    fail("parse", "malformed", undefined, responseBytes);
+    fail("parse", "malformed", undefined, responseBytes, shapeOf(result));
   }
   try {
     return JSON.parse(only.text) as unknown;
   } catch {
-    fail("parse", "malformed", undefined, responseBytes);
+    fail("parse", "malformed", undefined, responseBytes, shapeOf(result));
   }
 }
 
@@ -201,7 +255,7 @@ function recordArray(payload: unknown, responseBytes: number): unknown[] {
       if (Array.isArray(value)) return value;
     }
   }
-  fail("parse", "malformed", undefined, responseBytes);
+  fail("parse", "malformed", undefined, responseBytes, shapeOf(payload));
 }
 
 function projectCandidates(
@@ -220,7 +274,7 @@ function projectCandidates(
       !SAFE_PLANHAT_ID.test(source._id) ||
       !SAFE_PLANHAT_ID.test(source.companyId)
     ) {
-      fail("parse", "malformed", undefined, responseBytes);
+      fail("parse", "malformed", undefined, responseBytes, `record:${shapeOf(source)}`);
     }
     const conversationId = source._id;
     const companyId = source.companyId;

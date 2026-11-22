@@ -210,6 +210,7 @@ export async function handleConversationDiscovery(
       outcome: transport.outcome,
       provider_status_class: transport.statusClass,
       response_bytes: transport.responseBytes,
+      response_shape: transport.responseShape,
       duration_ms: dependencies.now() - startedAt,
     });
     return failure(correlationId, transport.stage, transport.outcome === "timeout" ? 504 : 502);
