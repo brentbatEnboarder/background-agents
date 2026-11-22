@@ -180,6 +180,54 @@ describe("Planhat Conversation discovery transport", () => {
     ).rejects.toMatchObject({ stage: "parse", outcome: "malformed" });
   });
 
+  it("reports an unparseable reply's structure without any of its values (#254)", async () => {
+    const secretText = "Invented Customer said something private";
+    const reply = Response.json({
+      jsonrpc: "2.0",
+      id: 2,
+      result: {
+        content: [
+          { type: "text", text: secretText },
+          {
+            type: "text",
+            text: JSON.stringify({ hits: [{ id: "x", score: 1, title: secretText }], total: 1 }),
+          },
+        ],
+      },
+    });
+    const error = await searchPlanhatConversations(
+      "token",
+      { query: "invented" },
+      sequence(reply)
+    ).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(PlanhatConversationDiscoveryTransportError);
+    const shape = (error as PlanhatConversationDiscoveryTransportError).responseShape ?? "";
+    expect(shape).toBe("{content:array(2)<{type:string(4),text:non-json-text(40)}>}");
+    expect(shape).not.toContain("Invented");
+  });
+
+  it("reports a JSON-text payload's field names when no record array is recognised (#254)", async () => {
+    const reply = Response.json({
+      jsonrpc: "2.0",
+      id: 2,
+      result: {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ hits: [{ id: "x", score: 1, "Private Name": "y" }] }),
+          },
+        ],
+      },
+    });
+    const error = (await searchPlanhatConversations(
+      "token",
+      { query: "invented" },
+      sequence(reply)
+    ).catch((caught: unknown) => caught)) as PlanhatConversationDiscoveryTransportError;
+    expect(error.stage).toBe("parse");
+    expect(error.responseShape).toBe("{hits:array(1)<{id:string(1),score:number,?:string(1)}>}");
+  });
+
   it("returns an empty candidate set for an empty record array", async () => {
     await expect(
       searchPlanhatConversations("token", { query: "invented" }, sequence(toolResult([])))
