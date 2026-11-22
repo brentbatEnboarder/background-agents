@@ -11,6 +11,7 @@ import {
 import { AutomationStore } from "../db/automation-store";
 import { PlanhatOAuthConnectionStore } from "../db/planhat-oauth-connections";
 import { SessionIndexStore } from "../db/session-index";
+import type { SqlDatabase } from "../db/sql-database";
 import { requireTokenEncryptionKey } from "../env-validation";
 import type { Logger } from "../logger";
 import type { Env } from "../types";
@@ -32,7 +33,72 @@ export interface PlanhatGatewayAdmission {
   validateBeforeBrokerage?: () => boolean;
 }
 
+interface RepositoryIdentityRow {
+  position: number;
+  repo_owner: string;
+  repo_name: string;
+  repo_id: number | null;
+  base_branch: string;
+}
+
 type Failure = (stage: string, status: number, message?: string) => Response;
+
+function repositoriesMatch(
+  left: readonly RepositoryIdentityRow[],
+  right: readonly RepositoryIdentityRow[]
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((repository, index) => {
+      const other = right[index];
+      return (
+        other !== undefined &&
+        repository.position === other.position &&
+        repository.repo_owner === other.repo_owner &&
+        repository.repo_name === other.repo_name &&
+        repository.repo_id === other.repo_id &&
+        repository.base_branch === other.base_branch
+      );
+    })
+  );
+}
+
+async function repositoryAuthorityMatches(
+  db: SqlDatabase,
+  session: Readonly<{
+    id: string;
+    environmentId?: string | null;
+    repoOwner: string | null;
+    repoName: string | null;
+    baseBranch: string | null;
+  }>
+): Promise<boolean> {
+  if (!session.environmentId) return false;
+  const [sessionRows, environmentRows] = await Promise.all([
+    db
+      .prepare(
+        `SELECT position, repo_owner, repo_name, repo_id, base_branch
+         FROM session_repositories WHERE session_id = ? ORDER BY position`
+      )
+      .bind(session.id)
+      .all<RepositoryIdentityRow>(),
+    db
+      .prepare(
+        `SELECT position, repo_owner, repo_name, repo_id, base_branch
+         FROM environment_repositories WHERE environment_id = ? ORDER BY position`
+      )
+      .bind(session.environmentId)
+      .all<RepositoryIdentityRow>(),
+  ]);
+  const repositories = sessionRows.results ?? [];
+  const primary = repositories[0];
+  const primaryMatches = primary
+    ? session.repoOwner === primary.repo_owner &&
+      session.repoName === primary.repo_name &&
+      session.baseBranch === primary.base_branch
+    : session.repoOwner === null && session.repoName === null && session.baseBranch === null;
+  return primaryMatches && repositoriesMatch(repositories, environmentRows.results ?? []);
+}
 
 /** Preserve the exact route's fail-closed sandbox check before reading its body. */
 export function authorizePlanhatSandbox(
@@ -87,6 +153,18 @@ export async function authorizePlanhatGateway(
   }
 
   if (admission.discoveryValidationEnvironmentId !== undefined) {
+    let repositoriesMatchEnvironment = false;
+    try {
+      repositoriesMatchEnvironment = await repositoryAuthorityMatches(ctx.db, session);
+    } catch {
+      logger.error("Planhat validation repository authority lookup failed", {
+        event: "planhat_gateway.repository_authority_lookup_failed",
+        session_id: sessionId,
+        request_id: ctx.request_id,
+        trace_id: ctx.trace_id,
+      });
+      return failure("authorization", 503);
+    }
     const isApprovedSlackValidationSession =
       session.environmentId === admission.discoveryValidationEnvironmentId &&
       connection.assignmentMode === "slack-environment" &&
@@ -96,8 +174,7 @@ export async function authorizePlanhatGateway(
       session.automationId === null &&
       session.parentSessionId === null &&
       session.spawnDepth === 0 &&
-      session.repoOwner === null &&
-      session.repoName === null &&
+      repositoriesMatchEnvironment &&
       Number.isSafeInteger(session.createdAt) &&
       admission.discoveryValidationIssuedAt !== undefined &&
       admission.discoveryValidationExpiresAt !== undefined &&
