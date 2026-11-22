@@ -263,6 +263,35 @@ export default defineConfig({
                 });
               }
               const toolName = (body.params as { name?: string } | undefined)?.name;
+              const toolArguments = (
+                body.params as { arguments?: Record<string, unknown> } | undefined
+              )?.arguments;
+              const discoveryCompanyId = (toolArguments?.FILTERS as { companyId?: unknown })
+                ?.companyId;
+              if (
+                (toolName === "search_records" &&
+                  toolArguments?.QUERY === "invented discovery query") ||
+                (toolName === "list_model_records" &&
+                  discoveryCompanyId === "company-discovery-invented")
+              ) {
+                // Issue #247 fixed discovery fixture: provider-only fields must be projected out.
+                return Response.json({
+                  jsonrpc: "2.0",
+                  id: body.id,
+                  result: {
+                    structuredContent: {
+                      records: [
+                        {
+                          _id: "conversation-discovery-invented",
+                          companyId: "company-discovery-invented",
+                          body: "private invented communication",
+                          address: "invented@example.test",
+                        },
+                      ],
+                    },
+                  },
+                });
+              }
               if (toolName === "list_model_records") {
                 return new Response(compactDiscoveryOverflowJsonRpc(body.id ?? 3), {
                   headers: { "content-type": "application/json" },
@@ -369,6 +398,7 @@ export default defineConfig({
             WEB_APP_URL: "https://app.test.local",
             WORKER_URL: "https://control.test.local",
             APP_NAME: "Open-Inspect",
+            PLANHAT_CONVERSATION_DISCOVERY_ENABLED: "true",
             PLANHAT_DISCOVERY_VALIDATION_ENABLED: "true",
             PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT: new Date(validationIssuedAt).toISOString(),
             PLANHAT_DISCOVERY_VALIDATION_EXPIRES_AT: new Date(

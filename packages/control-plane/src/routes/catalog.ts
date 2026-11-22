@@ -25,6 +25,7 @@ import { modelProviderAccountRoutes } from "./model-provider-accounts";
 import { planhatOAuthRoutes } from "./planhat-oauth";
 import { planhatExactConversationRoutes } from "./planhat-exact-conversation";
 import { planhatDiscoveryValidationRoutes } from "./planhat-discovery-validation";
+import { planhatConversationDiscoveryRoutes } from "./planhat-conversation-discovery";
 import { providerRuntimeCredentialRoutes } from "./provider-runtime-credentials";
 import { rbacRoutes } from "./rbac";
 import { reposRoutes } from "./repos";
@@ -71,6 +72,7 @@ export const catalog: readonly RouteModule[] = [
   // Fixed sandbox-authenticated Planhat Conversation routes
   planhatExactConversationRoutes,
   planhatDiscoveryValidationRoutes,
+  planhatConversationDiscoveryRoutes,
 
   // Integration settings
   integrationSettingsRoutes,

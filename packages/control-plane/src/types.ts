@@ -96,6 +96,8 @@ export interface EnvConfig {
   SANDBOX_INACTIVITY_TIMEOUT_MS?: string; // Inactivity timeout in ms (default: 600000 = 10 min)
   EXECUTION_TIMEOUT_MS?: string; // Max processing time before auto-fail; sessions fall back to DEFAULT_SANDBOX_TIMEOUT_SECONDS, the scheduler's recovery sweep to its DEFAULT_EXECUTION_TIMEOUT_MS
   SECRETS_CAP_ENFORCEMENT?: string; // "enforce" (default) fails spawn/build on oversized secret payloads; set "warn" to only log
+  // Fixed Planhat Conversation search/list kill switch (issue #247). Absent by default; only "true" enables.
+  PLANHAT_CONVERSATION_DISCOVERY_ENABLED?: string;
   // Short-lived, operator-owned Planhat discovery validation. All are absent by default.
   PLANHAT_DISCOVERY_VALIDATION_ENABLED?: string;
   PLANHAT_DISCOVERY_VALIDATION_ISSUED_AT?: string;
