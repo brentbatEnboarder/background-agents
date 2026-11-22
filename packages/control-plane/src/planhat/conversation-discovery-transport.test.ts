@@ -168,7 +168,8 @@ describe("Planhat Conversation discovery transport", () => {
 
   it.each([
     ["missing _id", { data: [{ companyId: COMPANY }] }],
-    ["missing companyId", { data: [{ _id: "conversation-a" }] }],
+    ["unsafe companyId on a search hit", { data: [{ _id: "conversation-a", companyId: "../x" }] }],
+    ["non-string companyId on a search hit", { data: [{ _id: "conversation-a", companyId: 7 }] }],
     ["non-string identity", { data: [{ _id: 7, companyId: COMPANY }] }],
     ["unsafe identity", { data: [{ _id: "../conversation", companyId: COMPANY }] }],
     ["record that is not an object", { data: ["conversation-a"] }],
@@ -226,6 +227,81 @@ describe("Planhat Conversation discovery transport", () => {
     ).catch((caught: unknown) => caught)) as PlanhatConversationDiscoveryTransportError;
     expect(error.stage).toBe("parse");
     expect(error.responseShape).toBe("{hits:array(1)<{id:string(1),score:number,?:string(1)}>}");
+  });
+
+  it("accepts ranked search hits without companyId as identity-unknown candidates (#254)", async () => {
+    // Field names match the observed live search_records envelope; all values are invented.
+    const hit = (id: string) => ({
+      _id: id,
+      type: "email",
+      subject: "Invented subject text",
+      snippet: "Invented snippet text that must never reach the sandbox",
+      model: "Conversation",
+    });
+    const result = await searchPlanhatConversations(
+      "token",
+      { query: "invented" },
+      sequence(toolResult({ data: [hit("conversation-a"), hit("conversation-b")] }))
+    );
+    expect(result).toEqual({
+      candidates: [
+        { companyId: null, conversationId: "conversation-a" },
+        { companyId: null, conversationId: "conversation-b" },
+      ],
+      providerCount: 2,
+      responseBytes: expect.any(Number),
+    });
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain("Invented");
+    expect(serialized).not.toContain("email");
+  });
+
+  it("skips search hits whose model is not Conversation without failing (#254)", async () => {
+    const result = await searchPlanhatConversations(
+      "token",
+      { query: "invented" },
+      sequence(
+        toolResult([
+          { _id: "conversation-a", model: "conversation" },
+          { _id: "company-hit", model: "Company" },
+          { _id: "odd-hit", model: 7 },
+          { _id: "conversation-b", companyId: "company-b", model: "Conversation" },
+        ])
+      )
+    );
+    expect(result.candidates).toEqual([
+      { companyId: null, conversationId: "conversation-a" },
+      { companyId: "company-b", conversationId: "conversation-b" },
+    ]);
+    expect(result.providerCount).toBe(4);
+  });
+
+  it("learns a known Company for a search hit first seen without one", async () => {
+    const result = await searchPlanhatConversations(
+      "token",
+      { query: "invented" },
+      sequence(
+        toolResult([
+          { _id: "conversation-a" },
+          { _id: "conversation-a", companyId: COMPANY },
+          { _id: "conversation-a" },
+        ])
+      )
+    );
+    expect(result.candidates).toEqual([{ companyId: COMPANY, conversationId: "conversation-a" }]);
+  });
+
+  it.each([
+    ["missing companyId", [{ _id: "conversation-a" }]],
+    ["unsafe companyId", [{ _id: "conversation-a", companyId: "../x" }]],
+  ])("keeps the list operation strict: %s fails closed", async (_label, payload) => {
+    await expect(
+      listPlanhatCompanyConversations(
+        "token",
+        { companyId: COMPANY },
+        sequence(toolResult(payload))
+      )
+    ).rejects.toMatchObject({ stage: "parse", outcome: "malformed" });
   });
 
   it("returns an empty candidate set for an empty record array", async () => {
