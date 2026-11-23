@@ -537,6 +537,16 @@ describe("Planhat exact Conversation gateway", () => {
       stage: expectedStage,
     });
     expect(JSON.stringify(body)).not.toMatch(/provider detail|private timeout|integration-planhat/);
+    expect(body).not.toHaveProperty("outcome");
+  });
+
+  it("names a reply truncated at Planhat's cap so the CS application can label it (CS #278)", async () => {
+    const response = await gatewayFetch("conversation-truncated");
+    expect(response.status).toBe(502);
+    const body = await response.json<Record<string, unknown>>();
+    expect(body).toMatchObject({ stage: "parse", outcome: "truncated" });
+    expect(Object.keys(body).sort()).toEqual(["correlationId", "error", "outcome", "stage"]);
+    expect(JSON.stringify(body)).not.toContain("xxxx");
   });
 });
 
