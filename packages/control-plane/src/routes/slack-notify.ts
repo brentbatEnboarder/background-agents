@@ -254,33 +254,7 @@ export async function handleSlackNotify(
   // one thread must never turn a delivered report into a failed request. It also does nothing when
   // the `SLACK_KV` binding is absent, so this ships safely ahead of the binding.
   if (!effective.threadTs && env.SLACK_KV) {
-    try {
-      // The Slack bot shows this label in its completion footer, so prefer the repo, then the
-      // environment's name, and only then its id, which a reader should never be shown.
-      let label = repoScope;
-      if (!label && session.environmentId) {
-        const environment = await new EnvironmentStore(ctx.db).getById(session.environmentId);
-        label = environment?.name ?? session.environmentId;
-      }
-      if (label) {
-        const threadSession: ThreadSession = {
-          sessionId,
-          repoId: repoScope ?? session.environmentId ?? sessionId,
-          repoFullName: label,
-          model: session.model,
-          ...(session.reasoningEffort ? { reasoningEffort: session.reasoningEffort } : {}),
-          createdAt: Date.now(),
-        };
-        await env.SLACK_KV.put(
-          threadSessionKey(channelId, messageTs),
-          JSON.stringify(threadSession),
-          { expirationTtl: THREAD_SESSION_TTL_SECONDS }
-        );
-        threadMapping = "mapped";
-      }
-    } catch {
-      threadMapping = "failed";
-    }
+    threadMapping = await mapThreadToSession(env, ctx.db, sessionId, channelId, messageTs, session);
   }
   if (parsed.attachment) {
     const partial = () => ({
@@ -631,3 +605,47 @@ slackNotifyRoutes.post(
   }),
   (c) => dispatch(c, handleSlackNotify)
 );
+
+/**
+ * Record which session owns the thread a top-level post started, so the Slack bot routes ordinary
+ * replies to it. Best effort: returns "failed" rather than throwing, because the message is already
+ * delivered and losing continuity must never turn a delivery into a failed request.
+ */
+export async function mapThreadToSession(
+  env: Env,
+  db: RequestContext["db"],
+  sessionId: string,
+  channelId: string,
+  messageTs: string,
+  knownSession?: Awaited<ReturnType<SessionIndexStore["get"]>>
+): Promise<"mapped" | "failed"> {
+  if (!env.SLACK_KV) return "failed";
+  try {
+    const session = knownSession ?? (await new SessionIndexStore(db).get(sessionId));
+    if (!session) return "failed";
+    const repoScope =
+      session.repoOwner && session.repoName ? `${session.repoOwner}/${session.repoName}` : null;
+    // The Slack bot shows this label in its completion footer, so prefer the repo, then the
+    // environment's name, and only then its id, which a reader should never be shown.
+    let label = repoScope;
+    if (!label && session.environmentId) {
+      const environment = await new EnvironmentStore(db).getById(session.environmentId);
+      label = environment?.name ?? session.environmentId;
+    }
+    if (!label) return "failed";
+    const threadSession: ThreadSession = {
+      sessionId,
+      repoId: repoScope ?? session.environmentId ?? sessionId,
+      repoFullName: label,
+      model: session.model,
+      ...(session.reasoningEffort ? { reasoningEffort: session.reasoningEffort } : {}),
+      createdAt: Date.now(),
+    };
+    await env.SLACK_KV.put(threadSessionKey(channelId, messageTs), JSON.stringify(threadSession), {
+      expirationTtl: THREAD_SESSION_TTL_SECONDS,
+    });
+    return "mapped";
+  } catch {
+    return "failed";
+  }
+}

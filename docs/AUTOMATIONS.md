@@ -239,6 +239,44 @@ omit them. An ambiguous launch or Slack outcome is recorded as `unknown` and mus
 automatically. The session receives normalized evidence, not source credentials or raw provider
 records, and its initial context directs it not to redeliver the platform-posted report.
 
+### Direct-Message Delivery
+
+A dedicated webhook automation (one without a fixed Slack delivery channel) may DM a named Slack
+user at `POST /webhooks/automation/<automation-id>/direct-message-delivery`. The route is off unless
+the control plane's `AUTOMATION_DIRECT_MESSAGE_DELIVERY_ENABLED` is exactly `true`; otherwise it
+answers `404`.
+
+```json
+{
+  "idempotencyKey": "<opaque string, at most 300 characters>",
+  "recipientUserId": "U…",
+  "text": "<plain Slack mrkdwn, at most 40,000 characters>",
+  "threadContext": "<opaque string, at most 1024 UTF-8 bytes>"
+}
+```
+
+The recipient must be on the automation's server-side allowlist
+(`automation_direct_message_recipients`, maintained by an operator); any other recipient is refused
+with `403`. Open-Inspect then:
+
+1. durably claims `(automation, idempotencyKey)`, storing a SHA-256 of the text (never the text) and
+   the thread context verbatim;
+2. creates exactly one automation session whose initial context carries the thread context as one
+   JSON string literal, marked as untrusted data;
+3. opens the bot's DM with the recipient (`conversations.open`, which needs the bot's `im:write`
+   scope) and posts the text without link or media unfurls;
+4. maps the parent message to the session for seven days, so an ordinary reply in that DM thread
+   continues it without a mention; and
+5. returns
+   `{"ok": true, "deduplicated": bool, "delivery": {"status", "dispatchId", "sessionId", "parent", "threadMapping", "errorCode"}}`,
+   where `status` is `claimed`, `delivered`, `thread-mapping-failed` or `unknown`.
+
+The platform never parses or branches on the thread context; what it means belongs to the caller. A
+repeat with the same recipient, text and thread context returns the original receipt with
+`deduplicated: true`; a different body under the same key is rejected with `409`. Anything short of
+a delivered, mapped parent is recorded and must not be retried automatically. Replies are still
+subject to the Slack bot's requester allowlist.
+
 ---
 
 ## GitHub Event Triggers

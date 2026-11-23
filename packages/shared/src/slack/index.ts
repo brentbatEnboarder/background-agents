@@ -12,6 +12,7 @@ export {
   openView,
   postBlocks,
   postEphemeral,
+  openDirectMessage,
   postMessage,
   publishView,
   removeReaction,

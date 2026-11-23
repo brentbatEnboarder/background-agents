@@ -10,6 +10,7 @@ import {
   getThreadMessages,
   getUserInfo,
   listChannels,
+  openDirectMessage,
   openView,
   postBlocks,
   postMessage,
@@ -187,6 +188,18 @@ describe("postMessage", () => {
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
     expect(body.channel).toBe("C123");
     expect(body.text).toBe("hello");
+  });
+
+  it("suppresses link and media unfurls when asked", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ ok: true, channel: "D123", ts: "1700000000.000300" }));
+
+    await postMessage("xoxb-token", "D123", "see https://example.com", { unfurl: false });
+
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]![1]?.body)) as Record<string, unknown>;
+    expect(body.unfurl_links).toBe(false);
+    expect(body.unfurl_media).toBe(false);
   });
 
   it("threads via thread_ts when provided", async () => {
@@ -952,6 +965,37 @@ describe("getMessageDetails", () => {
     );
 
     expect(await getMessageDetails("xoxb-token", "C123", "1.0")).toEqual({
+      ok: false,
+      error: "missing_scope",
+    });
+  });
+});
+
+describe("openDirectMessage", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("opens the bot's DM with one user and returns its conversation ID", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ ok: true, channel: { id: "D0123456789" } }));
+
+    const result = await openDirectMessage("xoxb-token", "U0123456789");
+
+    expect(result).toEqual({ ok: true, channel: { id: "D0123456789" } });
+    const [url, init] = fetchSpy.mock.calls[0]!;
+    expect(url).toBe("https://slack.com/api/conversations.open");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(String(init?.body))).toEqual({ users: "U0123456789" });
+  });
+
+  it("returns Slack's missing-scope error without throwing", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      jsonResponse({ ok: false, error: "missing_scope" })
+    );
+
+    await expect(openDirectMessage("xoxb-token", "U0123456789")).resolves.toEqual({
       ok: false,
       error: "missing_scope",
     });
