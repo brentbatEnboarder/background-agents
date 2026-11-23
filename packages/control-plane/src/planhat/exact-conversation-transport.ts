@@ -4,6 +4,34 @@ export const PLANHAT_MCP_URL = "https://api.planhat.com/v1/mcp";
 export const PLANHAT_MCP_OPERATION = "planhat.mcp.get-conversation-messages" as const;
 export const PLANHAT_MCP_PROTOCOL_VERSION = "2025-06-18";
 export const PLANHAT_MCP_SELECT = ["_id", "companyId", "numberOfParts", "parts"] as const;
+/**
+ * CS #278: Planhat caps one MCP tool reply at about 100,000 characters, so a long thread's full `parts`
+ * arrives truncated. Only after that signature does the gateway make one narrower read, selecting just
+ * the part fields the CS normalizer and attachment projection read. Whether Planhat honours dotted
+ * sub-field selection is what this read establishes; the CS side still validates every part.
+ */
+export const PLANHAT_MCP_NARROW_SELECT = [
+  "_id",
+  "companyId",
+  "numberOfParts",
+  "parts._id",
+  "parts.messageId",
+  "parts.conversationId",
+  "parts.date",
+  "parts.fromAddress",
+  "parts.toAddresses",
+  "parts.ccAddresses",
+  "parts.content",
+  "parts.type",
+  "parts.gmailMessageId",
+  "parts.attachments.name",
+  "parts.attachments.fileName",
+  "parts.attachments.filename",
+  "parts.attachments.mimeType",
+  "parts.attachments.contentType",
+] as const;
+/** Tool text at or above this length that is not JSON is treated as provider truncation (CS #278). */
+export const PLANHAT_MCP_TRUNCATION_CHARS = 100_000;
 
 export const PLANHAT_MCP_REQUEST_TIMEOUT_MS = 30_000;
 export const PLANHAT_MCP_CLEANUP_TIMEOUT_MS = 5_000;
@@ -20,7 +48,9 @@ export class PlanhatExactConversationTransportError extends Error {
     public readonly statusClass?: string,
     public readonly responseBytes?: number,
     /** Text-free structure of an unparseable reply: framing, lengths, field names and types (CS #278). */
-    public readonly responseShape?: string
+    public readonly responseShape?: string,
+    /** The tool text looked truncated at Planhat's reply cap (CS #278). */
+    public readonly truncated = false
   ) {
     super("Planhat exact Conversation retrieval unavailable");
   }
@@ -32,6 +62,10 @@ export interface PlanhatExactConversationRequest {
 }
 
 export interface PlanhatExactConversationResult {
+  /** Which field selection produced the record: the reviewed full read or the narrow fallback (CS #278). */
+  select: "full" | "narrow";
+  /** Text-free evidence for a narrow read: earlier full-read shape and the narrow record's part shape. */
+  responseShape?: string;
   record: {
     _id: string;
     companyId: string;
@@ -238,7 +272,14 @@ function projectToolRecord(
     try {
       record = JSON.parse(text);
     } catch {
-      malformed("parse", responseBytes, `content-text:${nonJsonText(text)}`);
+      throw new PlanhatExactConversationTransportError(
+        "parse",
+        "malformed",
+        undefined,
+        responseBytes,
+        `content-text:${nonJsonText(text)}`,
+        text.length >= PLANHAT_MCP_TRUNCATION_CHARS
+      );
     }
   }
 
@@ -263,6 +304,12 @@ function projectToolRecord(
     numberOfParts: structuredClone(source.numberOfParts),
     parts: structuredClone(source.parts),
   };
+}
+
+/** Part count and the first part's field names and value types; never values (CS #278). */
+function partShape(record: PlanhatExactConversationResult["record"]): string {
+  const parts = Array.isArray(record.parts) ? record.parts : [];
+  return `parts:${Array.isArray(record.parts) ? parts.length : "?"},numberOfParts:${typeof record.numberOfParts},first:${shapeOf(parts[0])}`;
 }
 
 /** Result shape with every text content item described by length and edges, never parsed values. */
@@ -346,44 +393,77 @@ export async function getExactPlanhatConversation(
       );
     }
 
-    const response = await transport(PLANHAT_MCP_URL, {
-      method: "POST",
-      headers: headers(accessToken, sessionId),
-      redirect: "manual",
-      signal,
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 2,
-        method: "tools/call",
-        params: {
-          name: "get_model_record",
-          arguments: {
-            MODEL: "Conversation",
-            OBJECT_ID: request.conversationId,
-            SELECT: PLANHAT_MCP_SELECT,
+    const readRecord = async (id: number, select: readonly string[]) => {
+      const response = await transport(PLANHAT_MCP_URL, {
+        method: "POST",
+        headers: headers(accessToken, sessionId),
+        redirect: "manual",
+        signal,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id,
+          method: "tools/call",
+          params: {
+            name: "get_model_record",
+            arguments: { MODEL: "Conversation", OBJECT_ID: request.conversationId, SELECT: select },
           },
-        },
-      }),
-    });
-    if (!response.ok) {
-      throw new PlanhatExactConversationTransportError(
-        "read",
-        "provider",
-        statusClass(response.status)
+        }),
+      });
+      if (!response.ok) {
+        throw new PlanhatExactConversationTransportError(
+          "read",
+          "provider",
+          statusClass(response.status)
+        );
+      }
+      const responseBody = await readBounded(response, PLANHAT_MCP_RESPONSE_MAX_BYTES, "read");
+      const message = parseJsonRpc(
+        responseBody.body,
+        response.headers.get("content-type"),
+        id,
+        "parse",
+        responseBody.bytes
       );
-    }
-    const responseBody = await readBounded(response, PLANHAT_MCP_RESPONSE_MAX_BYTES, "read");
-    const message = parseJsonRpc(
-      responseBody.body,
-      response.headers.get("content-type"),
-      2,
-      "parse",
-      responseBody.bytes
-    );
-    return {
-      record: projectToolRecord(message.result, request, responseBody.bytes),
-      responseBytes: responseBody.bytes,
+      return {
+        record: projectToolRecord(message.result, request, responseBody.bytes),
+        responseBytes: responseBody.bytes,
+      };
     };
+
+    try {
+      return { ...(await readRecord(2, PLANHAT_MCP_SELECT)), select: "full" };
+    } catch (error) {
+      if (!(error instanceof PlanhatExactConversationTransportError) || !error.truncated)
+        throw error;
+      const full = `full:${error.responseShape ?? "?"}`;
+      try {
+        const narrow = await readRecord(3, PLANHAT_MCP_NARROW_SELECT);
+        return {
+          ...narrow,
+          select: "narrow",
+          responseShape: `${full};narrow:${partShape(narrow.record)}`,
+        };
+      } catch (narrowError) {
+        const cause =
+          narrowError instanceof PlanhatExactConversationTransportError
+            ? narrowError
+            : new PlanhatExactConversationTransportError(
+                "read",
+                isTimeout(narrowError) ? "timeout" : "provider"
+              );
+        throw new PlanhatExactConversationTransportError(
+          cause.stage,
+          cause.outcome,
+          cause.statusClass,
+          cause.responseBytes,
+          `${full};narrow:${cause.stage}/${cause.outcome}:${cause.responseShape ?? "-"}`.slice(
+            0,
+            1500
+          ),
+          cause.truncated
+        );
+      }
+    }
   } catch (error) {
     if (error instanceof PlanhatExactConversationTransportError) throw error;
     throw new PlanhatExactConversationTransportError(

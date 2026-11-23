@@ -3,7 +3,9 @@ import {
   getExactPlanhatConversation,
   PLANHAT_MCP_OPERATION,
   PLANHAT_MCP_RESPONSE_MAX_BYTES,
+  PLANHAT_MCP_NARROW_SELECT,
   PLANHAT_MCP_SELECT,
+  PLANHAT_MCP_TRUNCATION_CHARS,
   PLANHAT_MCP_URL,
   PlanhatExactConversationTransportError,
 } from "./exact-conversation-transport";
@@ -308,6 +310,85 @@ describe("Planhat exact Conversation transport", () => {
       const { parts: _parts, ...partless } = record;
       const shape = await read(Response.json(JSON.parse(rpc({ structuredContent: partless }))));
       expect(shape).toBe("record:{_id:string(21),companyId:string(16),numberOfParts:number}");
+    });
+  });
+
+  describe("narrow read after a truncated full read (CS #278)", () => {
+    const SECRET = "Invented private body for Dana";
+    const part = { _id: "part-invented", content: SECRET, date: "2026-11-18T09:11:00.000Z" };
+    const record = {
+      _id: REQUEST.conversationId,
+      companyId: REQUEST.companyId,
+      numberOfParts: 1,
+      parts: [part],
+    };
+    const truncatedText = () =>
+      JSON.stringify({
+        ...record,
+        parts: [{ ...part, content: "x".repeat(PLANHAT_MCP_TRUNCATION_CHARS) }],
+      }).slice(0, PLANHAT_MCP_TRUNCATION_CHARS) + "\n[Output truncated]";
+    const text = (value: string, id: number) =>
+      Response.json({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: value }] } });
+    const run = async (...reads: Response[]) => {
+      const bodies: Record<string, unknown>[] = [];
+      const transport = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init);
+        if (request.method === "DELETE") return new Response(null, { status: 204 });
+        const body = JSON.parse(await request.text()) as Record<string, unknown>;
+        if (body.method === "initialize") return initialize();
+        if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+        bodies.push(body);
+        return reads.shift() ?? new Response(null, { status: 500 });
+      });
+      const outcome = await getExactPlanhatConversation("token", REQUEST, transport).catch(
+        (error: unknown) => error
+      );
+      const selects = bodies.map(
+        (body) => (body.params as { arguments: { SELECT: unknown } }).arguments.SELECT
+      );
+      return { outcome, selects, ids: bodies.map((body) => body.id) };
+    };
+
+    it("re-reads once with only the needed part fields and returns that record", async () => {
+      const { outcome, selects, ids } = await run(
+        text(truncatedText(), 2),
+        text(JSON.stringify(record), 3)
+      );
+      expect(selects).toEqual([PLANHAT_MCP_SELECT, PLANHAT_MCP_NARROW_SELECT]);
+      expect(ids).toEqual([2, 3]);
+      expect(outcome).toMatchObject({
+        select: "narrow",
+        record: { numberOfParts: 1, parts: [part] },
+      });
+      const shape = (outcome as { responseShape: string }).responseShape;
+      expect(shape).toMatch(
+        /^full:content-text:non-json-text\(\d+,starts:brace,ends:bracket\);narrow:parts:1,numberOfParts:number,first:\{_id:string\(13\),content:string\(30\),date:string\(24\)\}$/
+      );
+      expect(shape).not.toContain("Invented");
+    });
+
+    it("fails closed with both shapes when the narrow read is still truncated", async () => {
+      const { outcome, selects } = await run(text(truncatedText(), 2), text(truncatedText(), 3));
+      expect(selects).toHaveLength(2);
+      expect(outcome).toBeInstanceOf(PlanhatExactConversationTransportError);
+      expect(outcome).toMatchObject({ stage: "parse", outcome: "malformed", truncated: true });
+      expect((outcome as PlanhatExactConversationTransportError).responseShape).toMatch(
+        /^full:content-text:non-json-text\(\d+,[^;]+\);narrow:parse\/malformed:content-text:non-json-text\(/
+      );
+    });
+
+    it("never re-reads after a short unparseable reply or a successful full read", async () => {
+      const short = await run(text(JSON.stringify(record).slice(0, 40), 2));
+      expect(short.selects).toEqual([PLANHAT_MCP_SELECT]);
+      expect(short.outcome).toMatchObject({
+        stage: "parse",
+        outcome: "malformed",
+        truncated: false,
+      });
+
+      const full = await run(text(JSON.stringify(record), 2));
+      expect(full.selects).toEqual([PLANHAT_MCP_SELECT]);
+      expect(full.outcome).toMatchObject({ select: "full" });
     });
   });
 });
