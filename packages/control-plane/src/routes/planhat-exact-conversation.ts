@@ -94,6 +94,8 @@ async function handleExactConversation(
       assignment_mode: assignmentMode,
       operation: PLANHAT_MCP_OPERATION,
       outcome: "success",
+      read_select: result.select,
+      response_shape: result.responseShape,
       response_bytes: result.responseBytes,
       duration_ms: Date.now() - startedAt,
       request_id: ctx.request_id,
