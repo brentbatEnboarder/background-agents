@@ -1,20 +1,22 @@
 import type { SlackEventPayload } from "./events/payload";
 import type { SlackInteractionPayload } from "./interaction-payload";
+import {
+  SLACK_ALLOWED_USERS_KV_KEY,
+  parseSlackUserIdList,
+  parseSlackAllowedUserAdditions,
+  SLACK_ALLOWED_USERS_CACHE_TTL_SECONDS,
+  type AllowedSlackUsersKv,
+} from "@open-inspect/shared/slack";
 import { createLogger } from "./logger";
 
 const log = createLogger("ingress-policy");
 
 /**
  * Slack users admitted in addition to `SLACK_ALLOWED_USER_IDS`, as comma- or whitespace-separated
- * user IDs. Operators change it with `wrangler kv key put` and no deploy. The configured list stays
- * the floor: KV can only add users, and an unreadable or invalid KV value admits the floor alone.
+ * user IDs. Operators change it with `wrangler kv key put` and no deploy. The list's rules live in
+ * `@open-inspect/shared/slack` (`allowed-users.ts`), which the control plane reads too.
  */
-export const SLACK_ALLOWED_USERS_KV_KEY = "slack:allowed-users";
-const ALLOWLIST_CACHE_TTL_SECONDS = 60;
-
-interface AllowlistKv {
-  get(key: string, options?: { cacheTtl?: number }): Promise<string | null>;
-}
+export { SLACK_ALLOWED_USERS_KV_KEY };
 
 export interface SlackIngressBindings {
   SLACK_APP_ID?: string;
@@ -48,21 +50,13 @@ type SlackIngressPolicy = {
 const ID_PATTERNS = {
   app: /^A[A-Z0-9]+$/,
   team: /^T[A-Z0-9]+$/,
-  user: /^[UW][A-Z0-9]+$/,
   destination: /^[CGD][A-Z0-9]+$/,
 };
-
-function parseIdList(value: string, pattern: RegExp): Set<string> | null {
-  const rawIds = value.split(",");
-  const ids = rawIds.map((id) => id.trim());
-  if (ids.length === 0 || ids.some((id) => !pattern.test(id))) return null;
-  return new Set(ids);
-}
 
 function parsePolicy(bindings: SlackIngressBindings): SlackIngressPolicy | null {
   const appId = (bindings.SLACK_APP_ID ?? "").trim();
   const teamId = (bindings.SLACK_TEAM_ID ?? "").trim();
-  const allowedUserIds = parseIdList(bindings.SLACK_ALLOWED_USER_IDS ?? "", ID_PATTERNS.user);
+  const allowedUserIds = parseSlackUserIdList(bindings.SLACK_ALLOWED_USER_IDS);
   if (!ID_PATTERNS.app.test(appId) || !ID_PATTERNS.team.test(teamId) || !allowedUserIds) {
     return null;
   }
@@ -75,7 +69,7 @@ function parsePolicy(bindings: SlackIngressBindings): SlackIngressPolicy | null 
  * so a misconfigured deployment still fails closed rather than being bootstrapped from KV.
  */
 export async function resolveIngressBindings(
-  env: SlackIngressBindings & { SLACK_KV?: AllowlistKv }
+  env: SlackIngressBindings & { SLACK_KV?: AllowedSlackUsersKv }
 ): Promise<SlackIngressBindings> {
   const bindings: SlackIngressBindings = {
     SLACK_APP_ID: env.SLACK_APP_ID,
@@ -89,7 +83,7 @@ export async function resolveIngressBindings(
   let stored: string | null;
   try {
     stored = await env.SLACK_KV.get(SLACK_ALLOWED_USERS_KV_KEY, {
-      cacheTtl: ALLOWLIST_CACHE_TTL_SECONDS,
+      cacheTtl: SLACK_ALLOWED_USERS_CACHE_TTL_SECONDS,
     });
   } catch (e) {
     log.warn("slack.ingress.kv_allowlist_unavailable", {
@@ -97,13 +91,10 @@ export async function resolveIngressBindings(
     });
     return bindings;
   }
-  const additions = (stored ?? "").split(/[\s,]+/).filter((id) => id !== "");
-  if (additions.length === 0) return bindings;
-  if (additions.some((id) => !ID_PATTERNS.user.test(id))) {
-    log.warn("slack.ingress.kv_allowlist_invalid", { count: additions.length });
-    return bindings;
-  }
-  return { ...bindings, SLACK_ALLOWED_USER_IDS: [configured, ...additions].join(",") };
+  const additions = parseSlackAllowedUserAdditions(stored);
+  if (additions.status === "invalid") log.warn("slack.ingress.kv_allowlist_invalid");
+  if (additions.status !== "applied") return bindings;
+  return { ...bindings, SLACK_ALLOWED_USER_IDS: [configured, ...additions.userIds].join(",") };
 }
 
 function reject(reason: SlackIngressRejectionReason): SlackIngressDecision {

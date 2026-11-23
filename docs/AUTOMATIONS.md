@@ -255,16 +255,22 @@ answers `404`.
 }
 ```
 
-The recipient must be on the automation's server-side allowlist
-(`automation_direct_message_recipients`, maintained by an operator); any other recipient is refused
-with `403`. Open-Inspect then:
+The recipient must be one of the Slack bot's allowed users: the same list the Slack bot's ingress
+admits, `SLACK_ALLOWED_USER_IDS` plus any users added in its KV under `slack:allowed-users`. There
+is no separate recipient list (migration 0084's `automation_direct_message_recipients` table is
+unused). The control plane reads the KV through its `SLACK_KV` binding and needs its own
+`SLACK_ALLOWED_USER_IDS` binding with the Slack bot's value (Terraform binds both from the same
+inputs); without it every recipient is refused. Any other recipient is refused with `403`.
+Open-Inspect then:
 
 1. durably claims `(automation, idempotencyKey)`, storing a SHA-256 of the text (never the text) and
    the thread context verbatim;
-2. creates exactly one automation session whose initial context carries the thread context as one
-   JSON string literal, marked as untrusted data;
-3. opens the bot's DM with the recipient (`conversations.open`, which needs the bot's `im:write`
-   scope) and posts the text without link or media unfurls;
+2. opens the bot's DM with the recipient (`conversations.open`, which needs the bot's `im:write`
+   scope) and posts the text without link or media unfurls; a failed open or post ends here as
+   `unknown`, with no session started;
+3. creates exactly one automation session whose initial context carries the thread context as one
+   JSON string literal, marked as untrusted data; if that launch fails, the posted parent is
+   recorded as `thread-mapping-failed` with no session;
 4. maps the parent message to the session for seven days, so an ordinary reply in that DM thread
    continues it without a mention; and
 5. returns
@@ -276,6 +282,12 @@ repeat with the same recipient, text and thread context returns the original rec
 `deduplicated: true`; a different body under the same key is rejected with `409`. Anything short of
 a delivered, mapped parent is recorded and must not be retried automatically. Replies are still
 subject to the Slack bot's requester allowlist.
+
+A delivery still `claimed` ten minutes after its claim was stranded (for example the Worker was
+evicted mid-request). The next repeat with the same key ends it as `unknown` with
+`errorCode: "claim-expired"` and does not send. To recover, check the recipient's DM with the bot:
+if the message is there, nothing more is needed (a reply starts an ordinary session, since no thread
+was mapped); if it is not, send again under a new idempotency key once you have decided to.
 
 ---
 

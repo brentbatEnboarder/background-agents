@@ -44,31 +44,6 @@ describe("AutomationDirectMessageDeliveryStore (D1 integration)", () => {
     await new AutomationStore(env.DB).create(AUTOMATION);
   });
 
-  it("admits only recipients on the automation's own allowlist", async () => {
-    await env.DB.prepare(
-      `INSERT INTO automation_direct_message_recipients (automation_id, slack_user_id, created_at)
-       VALUES (?, ?, 1)`
-    )
-      .bind(AUTOMATION.id, "U0123456789")
-      .run();
-    const store = new AutomationDirectMessageDeliveryStore(env.DB);
-
-    expect(await store.isRecipientAllowed(AUTOMATION.id, "U0123456789")).toBe(true);
-    expect(await store.isRecipientAllowed(AUTOMATION.id, "U9999999999")).toBe(false);
-    expect(await store.isRecipientAllowed("another-automation", "U0123456789")).toBe(false);
-  });
-
-  it("rejects malformed recipient IDs at the schema", async () => {
-    await expect(
-      env.DB.prepare(
-        `INSERT INTO automation_direct_message_recipients (automation_id, slack_user_id, created_at)
-         VALUES (?, 'C0123456789', 1)`
-      )
-        .bind(AUTOMATION.id)
-        .run()
-    ).rejects.toThrow();
-  });
-
   it("claims once, stores the thread context verbatim, and completes exactly once", async () => {
     const store = new AutomationDirectMessageDeliveryStore(env.DB);
     const first = await store.claim(CLAIM);
@@ -124,5 +99,64 @@ describe("AutomationDirectMessageDeliveryStore (D1 integration)", () => {
         completed_at: 200,
       })
     ).rejects.toThrow();
+  });
+
+  it("ends only a claim made before the cut-off that never completed, as unknown", async () => {
+    const store = new AutomationDirectMessageDeliveryStore(env.DB);
+    await store.claim(CLAIM);
+
+    const fresh = await store.expireStaleClaim(AUTOMATION.id, CLAIM.idempotency_key, {
+      claimedBefore: CLAIM.created_at - 1,
+      completedAt: 500,
+    });
+    expect(fresh).toMatchObject({ status: "claimed", error_code: null, completed_at: null });
+
+    const expired = await store.expireStaleClaim(AUTOMATION.id, CLAIM.idempotency_key, {
+      claimedBefore: CLAIM.created_at,
+      completedAt: 600,
+    });
+    expect(expired).toMatchObject({
+      status: "unknown",
+      error_code: "claim-expired",
+      completed_at: 600,
+      session_id: null,
+      channel_id: null,
+    });
+    await expect(
+      store.complete(AUTOMATION.id, CLAIM.idempotency_key, {
+        status: "delivered",
+        invocation_id: "inv-1",
+        run_id: "run-1",
+        session_id: "sess-1",
+        channel_id: "D0123456789",
+        message_ts: "1700000000.000100",
+        thread_mapping: "mapped",
+        error_code: null,
+        completed_at: 700,
+      })
+    ).rejects.toThrow("already completed");
+  });
+
+  it("leaves a completed delivery as it is", async () => {
+    const store = new AutomationDirectMessageDeliveryStore(env.DB);
+    await store.claim(CLAIM);
+    await store.complete(AUTOMATION.id, CLAIM.idempotency_key, {
+      status: "delivered",
+      invocation_id: "inv-1",
+      run_id: "run-1",
+      session_id: "sess-1",
+      channel_id: "D0123456789",
+      message_ts: "1700000000.000100",
+      thread_mapping: "mapped",
+      error_code: null,
+      completed_at: 200,
+    });
+
+    const row = await store.expireStaleClaim(AUTOMATION.id, CLAIM.idempotency_key, {
+      claimedBefore: 10_000,
+      completedAt: 10_000,
+    });
+
+    expect(row).toMatchObject({ status: "delivered", error_code: null, completed_at: 200 });
   });
 });

@@ -68,6 +68,19 @@ run "binds_complete_non_secret_ingress_policy" {
   }
 }
 
+run "gives_the_control_plane_the_same_allowed_users_for_direct_messages" {
+  command = plan
+
+  assert {
+    condition = (
+      module.control_plane_worker.plain_text_bindings["SLACK_ALLOWED_USER_IDS"] == var.slack_allowed_user_ids &&
+      module.control_plane_worker.plain_text_bindings["SLACK_ALLOWED_USER_IDS"] ==
+      module.slack_bot_worker[0].plain_text_bindings["SLACK_ALLOWED_USER_IDS"]
+    )
+    error_message = "The control plane must read the Slack bot's own allowed users, so there is one list of who may use the bot."
+  }
+}
+
 run "omits_an_unconfigured_default_environment" {
   command = plan
 
