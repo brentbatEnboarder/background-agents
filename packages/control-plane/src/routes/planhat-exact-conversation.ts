@@ -123,6 +123,7 @@ async function handleExactConversation(
       outcome: transport.outcome,
       provider_status_class: transport.statusClass,
       response_bytes: transport.responseBytes,
+      response_shape: transport.responseShape,
       duration_ms: Date.now() - startedAt,
       request_id: ctx.request_id,
       trace_id: ctx.trace_id,
