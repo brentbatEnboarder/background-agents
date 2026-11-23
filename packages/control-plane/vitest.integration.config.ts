@@ -346,6 +346,16 @@ export default defineConfig({
                   headers: { "content-type": "application/json" },
                 });
               }
+              if (conversationId === "conversation-truncated") {
+                const text = `{"_id":"conversation-truncated","parts":[{"content":"${"x".repeat(100_000)}`;
+                return Response.json({
+                  jsonrpc: "2.0",
+                  id: body.id,
+                  result: {
+                    content: [{ type: "text", text: `${text.slice(0, 100_000)}\n[truncated]` }],
+                  },
+                });
+              }
               if (conversationId === "conversation-oversized") {
                 return new Response("small", {
                   headers: { "content-length": String(5 * 1024 * 1024 + 1) },

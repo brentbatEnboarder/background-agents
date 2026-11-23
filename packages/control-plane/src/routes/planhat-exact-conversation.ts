@@ -53,9 +53,11 @@ function failure(
   correlationId: string,
   stage: string,
   status: number,
-  message = "Planhat exact Conversation retrieval unavailable"
+  message = "Planhat exact Conversation retrieval unavailable",
+  outcome?: "truncated"
 ): Response {
-  return json({ error: message, correlationId, stage }, status);
+  // `truncated` tells the CS application the thread is too long for Planhat to return whole (CS #278).
+  return json({ error: message, correlationId, stage, ...(outcome ? { outcome } : {}) }, status);
 }
 
 async function handleExactConversation(
@@ -94,8 +96,6 @@ async function handleExactConversation(
       assignment_mode: assignmentMode,
       operation: PLANHAT_MCP_OPERATION,
       outcome: "success",
-      read_select: result.select,
-      response_shape: result.responseShape,
       response_bytes: result.responseBytes,
       duration_ms: Date.now() - startedAt,
       request_id: ctx.request_id,
@@ -130,7 +130,13 @@ async function handleExactConversation(
       request_id: ctx.request_id,
       trace_id: ctx.trace_id,
     });
-    return failure(correlationId, transport.stage, transport.outcome === "timeout" ? 504 : 502);
+    return failure(
+      correlationId,
+      transport.stage,
+      transport.outcome === "timeout" ? 504 : 502,
+      undefined,
+      transport.outcome === "truncated" ? "truncated" : undefined
+    );
   }
 }
 
