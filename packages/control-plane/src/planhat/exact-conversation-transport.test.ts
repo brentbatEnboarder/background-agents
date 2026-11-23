@@ -229,4 +229,85 @@ describe("Planhat exact Conversation transport", () => {
     });
     expect(transport).toHaveBeenCalledOnce();
   });
+
+  describe("text-free shape of an unparseable read (CS #278)", () => {
+    const SECRET = "Invented private body for Dana";
+    const record = {
+      _id: REQUEST.conversationId,
+      companyId: REQUEST.companyId,
+      numberOfParts: 1,
+      parts: [{ _id: "part-invented", content: SECRET }],
+    };
+    const rpc = (result: unknown) => JSON.stringify({ jsonrpc: "2.0", id: 2, result });
+    const read = async (reply: Response) => {
+      const transport = vi
+        .fn()
+        .mockResolvedValueOnce(initialize())
+        .mockResolvedValueOnce(new Response(null, { status: 202 }))
+        .mockResolvedValueOnce(reply)
+        .mockResolvedValueOnce(new Response(null, { status: 204 }));
+      const failure = (await getExactPlanhatConversation("token", REQUEST, transport).catch(
+        (error: unknown) => error
+      )) as PlanhatExactConversationTransportError;
+      expect(failure).toBeInstanceOf(PlanhatExactConversationTransportError);
+      expect(failure).toMatchObject({ stage: "parse", outcome: "malformed" });
+      expect(failure.responseShape).not.toMatch(
+        /Invented|Dana|conversation-invented|company-invented/
+      );
+      return failure.responseShape;
+    };
+
+    it("reports an event whose JSON is split across several data lines", async () => {
+      // A server may emit one multi-line JSON payload as several `data:` lines of one event.
+      const lines = JSON.stringify(
+        JSON.parse(rpc({ content: [{ type: "text", text: JSON.stringify(record) }] })),
+        null,
+        2
+      ).split("\n");
+      const shape = await read(
+        new Response(`event: message\n${lines.map((line) => `data: ${line}`).join("\n")}\n\n`, {
+          headers: { "content-type": "text/event-stream" },
+        })
+      );
+      expect(shape).toBe(
+        `event-stream(events:1,data-lines:${lines.length},last-event-lines:${lines.length},` +
+          "joined-last-event-json:yes):non-json-text(1,starts:brace,ends:brace)"
+      );
+    });
+
+    it("reports truncated tool text by length and edge classes", async () => {
+      const text = JSON.stringify(record);
+      const shape = await read(
+        Response.json(JSON.parse(rpc({ content: [{ type: "text", text: text.slice(0, -12) }] })))
+      );
+      expect(shape).toBe(
+        `content-text:non-json-text(${text.length - 12},starts:brace,ends:letter)`
+      );
+    });
+
+    it("reports several content items without their values", async () => {
+      const shape = await read(
+        Response.json(
+          JSON.parse(
+            rpc({
+              content: [
+                { type: "text", text: JSON.stringify(record).slice(0, 29) },
+                { type: "text", text: SECRET },
+              ],
+            })
+          )
+        )
+      );
+      expect(shape).toBe(
+        "result:{content:array(2)<{type:text,text:non-json-text(29,starts:brace,ends:letter)}," +
+          `{type:text,text:non-json-text(${SECRET.length},starts:letter,ends:letter)}>}`
+      );
+    });
+
+    it("reports a record missing its parts by field names and types only", async () => {
+      const { parts: _parts, ...partless } = record;
+      const shape = await read(Response.json(JSON.parse(rpc({ structuredContent: partless }))));
+      expect(shape).toBe("record:{_id:string(21),companyId:string(16),numberOfParts:number}");
+    });
+  });
 });
