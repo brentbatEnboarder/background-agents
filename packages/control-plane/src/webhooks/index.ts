@@ -7,6 +7,7 @@ import type { ControlPlaneHonoEnv } from "../routing/hono-env";
 import { sentryWebhookRoutes } from "./sentry";
 import { automationWebhookRoutes } from "./automation-webhook";
 import { automationArtifactDeliveryRoutes } from "./automation-artifact-delivery";
+import { automationDirectMessageDeliveryRoutes } from "./automation-direct-message-delivery";
 import { githubAutomationEventRoutes } from "./github";
 import { slackAutomationEventRoutes } from "./slack";
 
@@ -15,6 +16,7 @@ for (const module of [
   sentryWebhookRoutes,
   automationWebhookRoutes,
   automationArtifactDeliveryRoutes,
+  automationDirectMessageDeliveryRoutes,
   githubAutomationEventRoutes,
   slackAutomationEventRoutes,
 ]) {

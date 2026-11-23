@@ -16,11 +16,11 @@ function routeFor(method: string, path: string) {
 
 describe("route policy table", () => {
   it("publishes the complete canonical route catalog", () => {
-    expect(routes).toHaveLength(187);
+    expect(routes).toHaveLength(188);
 
     const paths = routes.map((route) => route.path);
-    expect(new Set(paths).size).toBe(144);
-    expect(new Set(routes.map((route) => `${route.method}:${route.path}`)).size).toBe(187);
+    expect(new Set(paths).size).toBe(145);
+    expect(new Set(routes.map((route) => `${route.method}:${route.path}`)).size).toBe(188);
   });
 
   it("declares every path in the literal-or-parameter grammar", () => {
@@ -277,6 +277,7 @@ describe("route policy table", () => {
     ["POST", "/webhooks/sentry/automation-1", "handler-authenticated"],
     ["POST", "/webhooks/automation/automation-1", "handler-authenticated"],
     ["POST", "/webhooks/automation/automation-1/artifact-delivery", "handler-authenticated"],
+    ["POST", "/webhooks/automation/automation-1/direct-message-delivery", "handler-authenticated"],
     ["POST", "/image-builds/build-complete", "handler-authenticated"],
     ["POST", "/image-builds/build-failed", "handler-authenticated"],
     ["GET", "/api/auth/get-session", "web-service"],

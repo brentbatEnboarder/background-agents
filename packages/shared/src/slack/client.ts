@@ -263,15 +263,45 @@ export function postMessage(
     thread_ts?: string;
     blocks?: unknown[];
     reply_broadcast?: boolean;
+    /** `false` suppresses both link and media unfurls; omitted keeps Slack's defaults. */
+    unfurl?: false;
+    signal?: AbortSignal;
   }
 ): Promise<SlackEnvelope<{ channel: string; ts: string }>> {
-  return slackPost(token, "chat.postMessage", postedMessagePayloadSchema, {
-    channel,
-    text,
-    thread_ts: options?.thread_ts,
-    blocks: options?.blocks,
-    reply_broadcast: options?.reply_broadcast,
-  });
+  return slackPost(
+    token,
+    "chat.postMessage",
+    postedMessagePayloadSchema,
+    {
+      channel,
+      text,
+      thread_ts: options?.thread_ts,
+      blocks: options?.blocks,
+      reply_broadcast: options?.reply_broadcast,
+      ...(options?.unfurl === false ? { unfurl_links: false, unfurl_media: false } : {}),
+    },
+    options?.signal
+  );
+}
+
+const openedConversationPayloadSchema = z.object({ channel: z.object({ id: z.string() }) });
+
+/**
+ * Open (or reuse) the bot's direct-message conversation with one user. Requires the bot's
+ * `im:write` scope; without it Slack returns `missing_scope`.
+ */
+export function openDirectMessage(
+  token: string,
+  userId: string,
+  options?: SlackRequestOptions
+): Promise<SlackEnvelope<{ channel: { id: string } }>> {
+  return slackPost(
+    token,
+    "conversations.open",
+    openedConversationPayloadSchema,
+    { users: userId },
+    options?.signal
+  );
 }
 
 export function postBlocks(
