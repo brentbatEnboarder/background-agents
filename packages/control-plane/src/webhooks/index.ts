@@ -8,6 +8,7 @@ import { sentryWebhookRoutes } from "./sentry";
 import { automationWebhookRoutes } from "./automation-webhook";
 import { automationArtifactDeliveryRoutes } from "./automation-artifact-delivery";
 import { automationDirectMessageDeliveryRoutes } from "./automation-direct-message-delivery";
+import { automationAllowedSlackUserRoutes } from "./automation-allowed-slack-user";
 import { githubAutomationEventRoutes } from "./github";
 import { slackAutomationEventRoutes } from "./slack";
 
@@ -17,6 +18,7 @@ for (const module of [
   automationWebhookRoutes,
   automationArtifactDeliveryRoutes,
   automationDirectMessageDeliveryRoutes,
+  automationAllowedSlackUserRoutes,
   githubAutomationEventRoutes,
   slackAutomationEventRoutes,
 ]) {

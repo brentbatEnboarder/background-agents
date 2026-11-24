@@ -256,9 +256,11 @@ answers `404`.
 ```
 
 The recipient must be one of the Slack bot's allowed users: the same list the Slack bot's ingress
-admits, `SLACK_ALLOWED_USER_IDS` plus any users added in its KV under `slack:allowed-users`. There
-is no separate recipient list (migration 0084's `automation_direct_message_recipients` table is
-unused). The control plane reads the KV through its `SLACK_KV` binding and needs its own
+admits, `SLACK_ALLOWED_USER_IDS` plus any users added in its KV under `slack:allowed-users` (how to
+change it:
+[Who May Use the Slack Bot](integrations/SLACK.md#who-may-use-the-slack-bot-the-allowed-users-list)).
+There is no separate recipient list (migration 0084's `automation_direct_message_recipients` table
+is unused). The control plane reads the KV through its `SLACK_KV` binding and needs its own
 `SLACK_ALLOWED_USER_IDS` binding with the Slack bot's value (Terraform binds both from the same
 inputs); without it every recipient is refused. Any other recipient is refused with `403`.
 Open-Inspect then:
@@ -288,6 +290,18 @@ evicted mid-request). The next repeat with the same key ends it as `unknown` wit
 `errorCode: "claim-expired"` and does not send. To recover, check the recipient's DM with the bot:
 if the message is there, nothing more is needed (a reply starts an ordinary session, since no thread
 was mapped); if it is not, send again under a new idempotency key once you have decided to.
+
+### Allowed Slack User Check
+
+An application running outside a session sandbox (for example a scheduled job choosing whom to
+direct-message) can ask whether one Slack user is on the Slack bot's allowed users at
+`POST /webhooks/automation/<automation-id>/allowed-slack-user` with body `{"userId": "U…"}`. It
+authenticates with the same bearer API key as direct-message delivery and, like it, answers only for
+a dedicated webhook automation (one without a fixed Slack delivery channel; otherwise `409`). It
+returns `{"userId": "U…", "allowed": true|false}`; a missing or invalid list answers `false`. It is
+read-only and is not behind the direct-message switch. Inside a session sandbox, use
+`requesterAllowed` from `GET /sessions/<id>/active-slack-request-context` instead, which answers for
+the active prompt's requester at the time of the call.
 
 ---
 

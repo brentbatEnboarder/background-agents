@@ -160,6 +160,7 @@ describe("session runtime proxy routes", () => {
       internal: "activeSlackRequestContext",
       init: { headers: SANDBOX_TOKEN_HEADERS },
       sandbox: true,
+      status: 502,
     },
     { method: "GET", path: "/sessions/session-1/tunnel-urls", internal: "tunnelUrls" },
     {
@@ -751,6 +752,73 @@ describe("session runtime proxy routes", () => {
       await expect(response.json()).resolves.toEqual({ error: "Invalid budget request" });
       expect(get).not.toHaveBeenCalled();
       expect(fetch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("active Slack request context", () => {
+    const REQUESTER = "U0123456789";
+    const context = { requesterUserId: REQUESTER, destinationId: "C0123456789", threadTs: "1.2" };
+    function requestContext(env: Partial<Env>, runtime: Response = Response.json(context)) {
+      const fetch = vi.fn(async (request: Request) =>
+        new URL(request.url).pathname === SessionInternalPaths.activeSlackRequestContext
+          ? runtime.clone()
+          : Response.json({ ok: true })
+      );
+      return dispatch(
+        new Request("https://test.local/sessions/session-1/active-slack-request-context", {
+          headers: SANDBOX_TOKEN_HEADERS,
+        }),
+        { ...createEnv(fetch), ...env } as Env
+      );
+    }
+    function kvWith(value: string | null) {
+      return { get: vi.fn(async () => value) } as unknown as Env["SLACK_KV"];
+    }
+
+    it("tells the sandbox the requester is on the Slack bot's allowed users", async () => {
+      const response = await requestContext({ SLACK_ALLOWED_USER_IDS: `U0000000001,${REQUESTER}` });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ...context, requesterAllowed: true });
+    });
+
+    it("counts users an operator added in KV", async () => {
+      const response = await requestContext({
+        SLACK_ALLOWED_USER_IDS: "U0000000001",
+        SLACK_KV: kvWith(REQUESTER),
+      });
+
+      expect(await response.json()).toEqual({ ...context, requesterAllowed: true });
+    });
+
+    it.each([
+      { case: "not on the list", env: { SLACK_ALLOWED_USER_IDS: "U0000000001" } },
+      { case: "no list configured", env: {} },
+      { case: "an invalid list", env: { SLACK_ALLOWED_USER_IDS: `${REQUESTER},not-a-user` } },
+    ])("reports the requester as not allowed when $case", async ({ env }) => {
+      const response = await requestContext(env);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ...context, requesterAllowed: false });
+    });
+
+    it("relays the runtime's refusal unchanged", async () => {
+      const response = await requestContext(
+        { SLACK_ALLOWED_USER_IDS: REQUESTER },
+        Response.json({ error: "Active prompt author is not a Slack user" }, { status: 403 })
+      );
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: "Active prompt author is not a Slack user" });
+    });
+
+    it("refuses a runtime answer without a Slack requester", async () => {
+      const response = await requestContext(
+        { SLACK_ALLOWED_USER_IDS: REQUESTER },
+        Response.json({ ok: true })
+      );
+
+      expect(response.status).toBe(502);
     });
   });
 });

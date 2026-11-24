@@ -398,6 +398,40 @@ reply. Set those values as `SLACK_APP_ID`, `SLACK_TEAM_ID`, `SLACK_ALLOWED_USER_
 `SLACK_ALLOWED_CHANNEL_IDS` repository variables. Existing enabled deployments must configure all
 four before planning or applying this upgrade.
 
+### Who May Use the Slack Bot (the Allowed-Users List)
+
+There is one list of Slack users who may use the bot. Every decision about a Slack user reads it:
+the Slack bot's ingress, automation direct messages, the requester status a sandbox reads from
+`GET /sessions/<id>/active-slack-request-context` (`requesterAllowed`), and the service check
+`POST /webhooks/automation/<id>/allowed-slack-user` (see
+[Automations](../AUTOMATIONS.md#allowed-slack-user-check)). Applications built on Open-Inspect must
+ask through those routes rather than keep their own copy.
+
+The list is the configured floor plus operator additions:
+
+- **Floor**: `slack_allowed_user_ids` in Terraform (the `SLACK_ALLOWED_USER_IDS` repository
+  variable), bound to both the Slack bot and the control plane. Changing it needs a Terraform apply
+  that redeploys both Workers. If it is empty or invalid, nobody is admitted.
+- **Additions**: the key `slack:allowed-users` in the Slack bot's KV namespace (Terraform output
+  `slack_kv_id`), holding Slack member IDs separated by commas or whitespace. No deploy is needed;
+  Workers may serve a cached copy for up to 60 seconds. An invalid or unreadable value adds nobody
+  (the floor still applies).
+
+To add someone without a deploy, copy their member ID from their Slack profile (**More → Copy member
+ID**), read the current additions, and write the whole list back with the new ID (a put replaces the
+value):
+
+```bash
+npx wrangler kv key get --remote --namespace-id "$SLACK_KV_ID" "slack:allowed-users"
+npx wrangler kv key put --remote --namespace-id "$SLACK_KV_ID" "slack:allowed-users" "U0123456789 U0987654321"
+```
+
+To remove someone added in KV, write the list back without them (or delete the key if nobody is
+left). Someone on the floor can only be removed by changing `slack_allowed_user_ids` and applying
+Terraform: KV can only add users. Removal takes effect on their next message or tool call, within
+the cache window; a session they already started is not stopped, but tools that check
+`requesterAllowed` refuse them.
+
 - Slack bot tokens stay server-side. They are not sent to sandboxes.
 - Slack requests are verified before Open-Inspect acts on them.
 - Slack-created sessions use deployment-level repository access. The repositories shown in Slack are
