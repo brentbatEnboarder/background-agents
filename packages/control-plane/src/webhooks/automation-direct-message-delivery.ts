@@ -2,7 +2,8 @@
  * Authenticated, idempotent delivery of one application-prepared Slack direct message through a
  * dedicated webhook automation.
  *
- * The platform DMs one recipient from the automation's server-side allowlist, creates one automation
+ * The platform DMs one recipient who is on the Slack bot's allowed users (the same list its ingress
+ * admits: `SLACK_ALLOWED_USER_IDS` plus KV `slack:allowed-users`), then creates one automation
  * session seeded with the caller's opaque `threadContext`, and maps the posted parent to that session
  * so an ordinary reply in the DM thread continues it. The thread context is stored and handed on
  * verbatim; the platform never parses it or branches on it, so a caller can define new message kinds
@@ -10,7 +11,12 @@
  */
 
 import { normalizeWebhookEvent, type AutomationEvent } from "@open-inspect/shared/triggers";
-import { openDirectMessage, postMessage, type SlackEnvelope } from "@open-inspect/shared/slack";
+import {
+  openDirectMessage,
+  postMessage,
+  resolveAllowedSlackUserIds,
+  type SlackEnvelope,
+} from "@open-inspect/shared/slack";
 import { Hono } from "hono";
 import { z } from "zod";
 import { verifyWebhookApiKey } from "../auth/webhook-key";
@@ -41,6 +47,12 @@ const MAX_THREAD_CONTEXT_BYTES = 1_024;
 /** Slack truncates `chat.postMessage` text beyond this many characters; refuse rather than cut. */
 const MAX_TEXT_CHARS = 40_000;
 const MAX_REQUEST_BYTES = 256 * 1024;
+/**
+ * A claim still unfinished this long after it was made was stranded by a crash or timeout: no
+ * request lives this long. A repeat then ends it as `unknown` (`claim-expired`) rather than leaving it
+ * `claimed` forever; it never sends, because a message may already have been posted.
+ */
+export const STALE_CLAIM_MS = 10 * 60_000;
 const SLACK_USER_ID = /^[UW][A-Z0-9]{2,}$/;
 const DM_CHANNEL_ID = /^D[A-Z0-9]{8,}$/;
 
@@ -69,10 +81,7 @@ interface DeliveryAutomation {
 /** The platform collaborators this route drives; tests substitute in-memory fakes. */
 export interface DirectMessageDeliveryPorts {
   findAutomation(id: string): Promise<DeliveryAutomation | null>;
-  deliveries: Pick<
-    AutomationDirectMessageDeliveryStore,
-    "isRecipientAllowed" | "claim" | "complete"
-  >;
+  deliveries: Pick<AutomationDirectMessageDeliveryStore, "claim" | "complete" | "expireStaleClaim">;
   /** Starts exactly one automation session, or returns null when the launch was not unique. */
   launchSession(
     event: AutomationEvent
@@ -129,8 +138,10 @@ export async function handleAutomationDirectMessageDelivery(
   } catch {
     return error("Invalid direct message delivery body", 400);
   }
-  if (!(await ports.deliveries.isRecipientAllowed(automation.id, input.recipientUserId))) {
-    return error("Recipient is not allowed for this automation", 403);
+  // One list of who may use the bot; a leaked webhook key cannot DM anyone outside it.
+  const allowed = await resolveAllowedSlackUserIds(env.SLACK_ALLOWED_USER_IDS, env.SLACK_KV);
+  if (!allowed.userIds?.has(input.recipientUserId)) {
+    return error("Recipient is not an allowed Slack user", 403);
   }
 
   const textSha256 = await sha256(input.text);
@@ -150,7 +161,15 @@ export async function handleAutomationDirectMessageDelivery(
     return error("Idempotency key conflicts with its original message", 409);
   }
   if (!claim.created) {
-    return json({ ok: true, deduplicated: true, delivery: publicReceipt(claim.row) });
+    const now = Date.now();
+    const row =
+      claim.row.status === "claimed" && claim.row.created_at <= now - STALE_CLAIM_MS
+        ? await ports.deliveries.expireStaleClaim(automation.id, input.idempotencyKey, {
+            claimedBefore: now - STALE_CLAIM_MS,
+            completedAt: now,
+          })
+        : claim.row;
+    return json({ ok: true, deduplicated: true, delivery: publicReceipt(row) });
   }
 
   const finish = async (
@@ -175,39 +194,43 @@ export async function handleAutomationDirectMessageDelivery(
       ),
     });
 
+  // Post first, then start the session: a failed open or post leaves no session behind, and the
+  // seven-day thread mapping is written only once both exist.
+  const opened = await ports.openDirectMessage(input.recipientUserId);
+  if (!opened.ok || !DM_CHANNEL_ID.test(opened.channel.id)) {
+    return finish({
+      error_code: opened.ok ? "slack-open-not-direct-message" : `slack-open-${opened.error}`,
+    });
+  }
+  const posted = await ports.postMessage(opened.channel.id, input.text);
+  if (!posted.ok) {
+    return finish({ error_code: `slack-post-${posted.error}` });
+  }
+  const parent = { channel_id: posted.channel, message_ts: posted.ts };
+  if (!DM_CHANNEL_ID.test(posted.channel)) {
+    return finish({ ...parent, error_code: "slack-post-not-direct-message" });
+  }
+
+  // The parent is posted; from here every outcome records it, so it is never posted again.
   const event = normalizeWebhookEvent(
     automation.id,
     { recipientUserId: input.recipientUserId },
     input.idempotencyKey
   );
   event.contextBlock = buildSessionContext(input);
-  let started: Awaited<ReturnType<DirectMessageDeliveryPorts["launchSession"]>>;
+  let started: Awaited<ReturnType<DirectMessageDeliveryPorts["launchSession"]>> | undefined;
   try {
     started = await ports.launchSession(event);
   } catch {
-    return finish({ error_code: "session-launch-unknown" });
+    started = undefined;
   }
-  if (!started) return finish({ error_code: "session-launch-not-unique" });
-  const launched = {
-    invocation_id: started.invocationId,
-    run_id: started.runId,
-    session_id: started.sessionId,
-  };
-
-  const opened = await ports.openDirectMessage(input.recipientUserId);
-  if (!opened.ok || !DM_CHANNEL_ID.test(opened.channel.id)) {
+  if (!started) {
     return finish({
-      ...launched,
-      error_code: opened.ok ? "slack-open-not-direct-message" : `slack-open-${opened.error}`,
+      ...parent,
+      status: "thread-mapping-failed",
+      thread_mapping: "failed",
+      error_code: started === null ? "session-launch-not-unique" : "session-launch-unknown",
     });
-  }
-  const posted = await ports.postMessage(opened.channel.id, input.text);
-  if (!posted.ok) {
-    return finish({ ...launched, error_code: `slack-post-${posted.error}` });
-  }
-  const parent = { channel_id: posted.channel, message_ts: posted.ts };
-  if (!DM_CHANNEL_ID.test(posted.channel)) {
-    return finish({ ...launched, ...parent, error_code: "slack-post-not-direct-message" });
   }
 
   let threadMapping: "mapped" | "failed";
@@ -217,7 +240,9 @@ export async function handleAutomationDirectMessageDelivery(
     threadMapping = "failed";
   }
   return finish({
-    ...launched,
+    invocation_id: started.invocationId,
+    run_id: started.runId,
+    session_id: started.sessionId,
     ...parent,
     status: threadMapping === "mapped" ? "delivered" : "thread-mapping-failed",
     thread_mapping: threadMapping,

@@ -98,6 +98,9 @@ export interface EnvConfig {
   SECRETS_CAP_ENFORCEMENT?: string; // "enforce" (default) fails spawn/build on oversized secret payloads; set "warn" to only log
   // Automation direct-message delivery kill switch. Absent by default; only "true" enables.
   AUTOMATION_DIRECT_MESSAGE_DELIVERY_ENABLED?: string;
+  // The Slack bot's configured allowed users (same value as its own binding). With the KV additions in
+  // SLACK_KV this is the one list of who may use the bot; direct messages go only to users on it.
+  SLACK_ALLOWED_USER_IDS?: string;
   // Fixed Planhat Conversation search/list kill switch (issue #247). Absent by default; only "true" enables.
   PLANHAT_CONVERSATION_DISCOVERY_ENABLED?: string;
   // Short-lived, operator-owned Planhat discovery validation. All are absent by default.

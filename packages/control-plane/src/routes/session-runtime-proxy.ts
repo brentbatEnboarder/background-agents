@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { admit } from "../routing/admit";
 import type { ControlPlaneHonoEnv } from "../routing/hono-env";
 import { readBodyCapped } from "@open-inspect/shared/http-body";
+import { resolveAllowedSlackUserIds } from "@open-inspect/shared/slack";
 import type {
   SessionParticipantProfilesResponse,
   SessionParticipantProfile,
@@ -80,6 +81,35 @@ function simpleProxy(config: SimpleProxyConfig): ProxyHandler {
 
     return response;
   };
+}
+
+const slackRequestContextSchema = z.object({ requesterUserId: z.string().min(1) }).passthrough();
+
+/**
+ * The active prompt's Slack coordinates plus whether its requester is, right now, on the Slack bot's
+ * allowed users (the one list its ingress admits: `SLACK_ALLOWED_USER_IDS` plus KV
+ * `slack:allowed-users`). Evaluated on every call, so removing someone takes effect mid-session.
+ * A missing or invalid list reports `requesterAllowed: false`.
+ */
+async function handleActiveSlackRequestContext(
+  _request: Request,
+  env: Env,
+  params: SessionParams,
+  ctx: SessionRouteContext
+): Promise<Response> {
+  const response = await ctx.sessionRuntime.fetch(
+    params.id,
+    SessionInternalPaths.activeSlackRequestContext,
+    { method: "GET" }
+  );
+  if (!response.ok) return response;
+  const parsed = slackRequestContextSchema.safeParse(await response.json().catch(() => null));
+  if (!parsed.success) return error("Invalid Slack request context from session runtime", 502);
+  const allowed = await resolveAllowedSlackUserIds(env.SLACK_ALLOWED_USER_IDS, env.SLACK_KV);
+  return Response.json({
+    ...parsed.data,
+    requesterAllowed: allowed.userIds?.has(parsed.data.requesterUserId) === true,
+  });
 }
 
 function legacyTokenRefresh(
@@ -419,14 +449,7 @@ sessionRuntimeProxyRoutes.post(
 sessionRuntimeProxyRoutes.get(
   "/sessions/:id/active-slack-request-context",
   admit({ ...SCM_AGNOSTIC_SANDBOX_ROUTE, authorization: NO_AUTHORIZATION }),
-  (c) =>
-    dispatchSession(
-      c,
-      simpleProxy({
-        internalPath: SessionInternalPaths.activeSlackRequestContext,
-        runtimeMethod: "GET",
-      })
-    )
+  (c) => dispatchSession(c, handleActiveSlackRequestContext)
 );
 sessionRuntimeProxyRoutes.get(
   "/sessions/:id/tunnel-urls",

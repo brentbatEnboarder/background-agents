@@ -48,20 +48,13 @@ export type AutomationDirectMessageCompletion = Pick<
   | "completed_at"
 >;
 
-/** Recipient allowlist, durable idempotency claims and receipts for automation direct messages. */
+/**
+ * Durable idempotency claims and receipts for automation direct messages. Recipients are checked
+ * against the Slack bot's allowed users, not stored here; migration 0084's
+ * `automation_direct_message_recipients` table is unused and left empty.
+ */
 export class AutomationDirectMessageDeliveryStore {
   constructor(private readonly db: SqlDatabase) {}
-
-  async isRecipientAllowed(automationId: string, slackUserId: string): Promise<boolean> {
-    const row = await this.db
-      .prepare(
-        `SELECT 1 AS allowed FROM automation_direct_message_recipients
-         WHERE automation_id = ? AND slack_user_id = ?`
-      )
-      .bind(automationId, slackUserId)
-      .first<{ allowed: number }>();
-    return row !== null;
-  }
 
   async claim(
     input: AutomationDirectMessageClaim
@@ -133,6 +126,29 @@ export class AutomationDirectMessageDeliveryStore {
     }
     const row = await this.get(automationId, idempotencyKey);
     if (!row) throw new Error("Automation direct message completion was not persisted");
+    return row;
+  }
+
+  /**
+   * Ends a claim made at or before `claimedBefore` that never completed, as `unknown` with
+   * `claim-expired`. Returns the row as it now stands (unchanged when it was completed meanwhile).
+   */
+  async expireStaleClaim(
+    automationId: string,
+    idempotencyKey: string,
+    options: { claimedBefore: number; completedAt: number }
+  ): Promise<AutomationDirectMessageDeliveryRow> {
+    await this.db
+      .prepare(
+        `UPDATE automation_direct_message_deliveries
+         SET status = 'unknown', error_code = 'claim-expired', completed_at = ?
+         WHERE automation_id = ? AND idempotency_key = ? AND status = 'claimed'
+           AND created_at <= ?`
+      )
+      .bind(options.completedAt, automationId, idempotencyKey, options.claimedBefore)
+      .run();
+    const row = await this.get(automationId, idempotencyKey);
+    if (!row) throw new Error("Automation direct message claim was not found");
     return row;
   }
 }

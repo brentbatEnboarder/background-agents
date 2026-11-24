@@ -79,3 +79,11 @@ export {
   threadSessionSchema,
   type ThreadSession,
 } from "./thread-session";
+export {
+  SLACK_ALLOWED_USERS_KV_KEY,
+  parseSlackUserIdList,
+  parseSlackAllowedUserAdditions,
+  SLACK_ALLOWED_USERS_CACHE_TTL_SECONDS,
+  resolveAllowedSlackUserIds,
+} from "./allowed-users";
+export type { AllowedSlackUsers, AllowedSlackUsersKv } from "./allowed-users";

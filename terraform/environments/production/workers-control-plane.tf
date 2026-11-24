@@ -129,6 +129,12 @@ module "control_plane_worker" {
     local.google_enabled ? [
       { name = "GOOGLE_CLIENT_ID", value = trimspace(var.google_client_id) },
     ] : [],
+    # The Slack bot's configured allowed users, the same value its own Worker gets. With the KV
+    # additions in SLACK_KV this is the one list of who may use the bot; automation direct
+    # messages go only to users on it.
+    var.enable_slack_bot ? [
+      { name = "SLACK_ALLOWED_USER_IDS", value = var.slack_allowed_user_ids },
+    ] : [],
     trimspace(var.modal_workspace) != "" ? [
       { name = "MODAL_WORKSPACE", value = var.modal_workspace },
       { name = "MODAL_APP_NAME", value = local.modal_app_name },
